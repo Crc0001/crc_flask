@@ -1,0 +1,43 @@
+<form id="edit-form"
+      method="post"
+      action="{{ url_for('strain_db.edit', sample_id=sample.id) }}"
+      style="display: flex; flex-direction: column; gap: 12px;">
+
+    <!-- 样品编号 -->
+    <div class="form-row" style="display:flex; align-items:center; gap:12px;">
+        <label style="width:120px; text-align:right;">样品编号</label>
+        <input type="text" name="sample_code"
+               value="{{ sample.sample_code or '' }}"
+               style="padding:6px 8px; width:200px;">
+    </div>
+
+    <!-- 采集日期 -->
+    <div class="form-row" style="display:flex; align-items:center; gap:12px;">
+        <label style="width:120px; text-align:right;">采集日期</label>
+        <input type="datetime-local" name="collect_date"
+               value="{{ sample.collect_date.strftime('%Y-%m-%dT%H:%M:%S') if sample.collect_date }}"
+               style="padding:6px 8px; width:200px;">
+    </div>
+
+    <!-- 采集人 -->
+    <div class="form-row" style="display:flex; align-items:center; gap:12px;">
+        <label style="width:120px; text-align:right;">采集人</label>
+        <input type="text" name="collector"
+               value="{{ sample.collector or '' }}"
+               style="padding:6px 8px; width:200px;">
+    </div>
+
+    <!-- 采集地点 -->
+    <div class="form-row" style="display:flex; align-items:center; gap:12px;">
+        <label style="width:120px; text-align:right;">采集地点</label>
+        <input type="text" name="collect_location"
+               value="{{ sample.collect_location or '' }}"
+               style="padding:6px 8px; width:200px;">
+    </div>
+
+    <!-- 提交按钮 -->
+    <div style="text-align:right; margin-top:8px;">
+        <button type="submit" class="btn btn-search">保存</button>
+    </div>
+
+</form>

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"c:/Users/Administrator/Desktop/crc_flask/.venv/Scripts/python.exe\" -m py_compile \"c:/Users/Administrator/Desktop/crc_flask/demo_phash.py\" \"c:/Users/Administrator/Desktop/crc_flask/demo_orb_color.py\")",
+      "Bash(\"c:/Users/Administrator/Desktop/crc_flask/.venv/Scripts/python.exe\" -m py_compile \"c:/Users/Administrator/Desktop/crc_flask/demo_orb_color.py\")",
+      "Bash(\"c:/Users/Administrator/Desktop/crc_flask/.venv/Scripts/python.exe\" -m py_compile \"c:/Users/Administrator/Desktop/crc_flask/demo_decision.py\")",
+      "Bash(\"c:/Users/Administrator/Desktop/crc_flask/.venv/Scripts/python.exe\" -m py_compile \"c:/Users/Administrator/Desktop/crc_flask/app/routes/ai_detection.py\")",
+      "Bash(\"c:/Users/Administrator/Desktop/crc_flask/.venv/Scripts/python.exe\" -m py_compile \"c:/Users/Administrator/Desktop/crc_flask/app/models/strain.py\" \"c:/Users/Administrator/Desktop/crc_flask/app/models/__init__.py\" \"c:/Users/Administrator/Desktop/crc_flask/app/routes/strain_showcase.py\")",
+      "Bash(python test_plot_generation.py)",
+      "Bash(source .venv/Scripts/activate)",
+      "Read(//c/Users/Administrator/Desktop/标红TOF数据/**)",
+      "Bash(mv /tmp/ai_detection_new.js \"c:\\\\Users\\\\Administrator\\\\Desktop\\\\crc_flask\\\\app\\\\static\\\\js\\\\ai_detection.js\")"
+    ]
+  }
+}

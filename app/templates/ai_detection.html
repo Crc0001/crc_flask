@@ -1,0 +1,233 @@
+{% extends "layout.html" %}
+{% block title %}菌种鉴定{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ai_detection.css') }}">
+{% endblock %}
+
+{% block content %}
+    <!-- 消息提示 -->
+    {% if message %}
+    <div class="message-box message-info">{{ message }}</div>
+    {% endif %}
+
+    {% if error_message %}
+    <div class="message-box message-error">{{ error_message }}</div>
+    {% endif %}
+
+    <!-- 输入表单 -->
+    <form method="post" enctype="multipart/form-data" class="ai-form" id="detectionForm">
+        <!-- 第一行：输入框区域 -->
+        <div class="input-row-container">
+            <div class="input-group">
+                <label>选择文件</label>
+                <input type="file" name="image" accept="image/*" required class="input-field file-input" id="image-input">
+                <div class="file-info"></div>
+            </div>
+
+            <div class="input-group">
+                <label>样品编号</label>
+                <input type="text" name="sample_code" required class="input-field text-input" id="sample-code">
+            </div>
+
+            <div class="input-group">
+                <label>采集日期</label>
+                <input type="date" name="collect_date" required class="input-field date-input" id="collect-date">
+            </div>
+
+            <div class="input-group location-group">
+                <label>采样地点</label>
+                <div class="location-dropdown-container">
+                    <div class="location-levels">
+                        <select id="class_general" name="class_general" required class="location-dropdown">
+                            <option value="">请选择大类</option>
+                        </select>
+                        <div class="dropdown-arrow">▶</div>
+                        <select id="class_levelone" name="class_levelone" required disabled class="location-dropdown">
+                            <option value="">请选择一级分类</option>
+                        </select>
+                        <div class="dropdown-arrow">▶</div>
+                        <select id="class_leveltwo" name="class_leveltwo" required disabled class="location-dropdown">
+                            <option value="">请选择二级分类</option>
+                        </select>
+                    </div>
+                    <!-- 隐藏字段，存储完整的location -->
+                    <input type="hidden" name="location" id="full_location">
+                </div>
+            </div>
+        </div>
+
+        <!-- 第二行：图片预览和大模型检测 -->
+        <div class="row image-preview-row">
+            <div class="card image-preview-card">
+                <div class="card-header">
+                    <h4>📷 图片预览</h4>
+                </div>
+                <div class="card-content image-content">
+                    {% if image_url %}
+                    <div class="image-container">
+                        <img src="{{ image_url }}" alt="样本图片" id="sample-image">
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📁</div>
+                        <h4>暂无图片</h4>
+                        <p>请先选择图片文件</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {#
+            <div class="card detection-result-card">
+                <div class="card-header">
+                    <h4>🎯 目标检测结果</h4>
+                </div>
+                <div class="card-content detection-content">
+                    {% if final_result %}
+                    <div class="detection-result-container">
+                        <div class="detection-strain">{{ final_result.name }}</div>
+                        <div class="detection-confidence">置信度: {{ "%.2f"|format(final_result.confidence * 100) }}%</div>
+                        <div class="detection-count">检测到 {{ detect_count }} 个目标</div>
+                    </div>
+                    {% elif results %}
+                    <div class="detection-result-container">
+                        <div class="detection-strain">多个目标</div>
+                        <div class="detection-confidence">检测到 {{ detect_count }} 个目标</div>
+                        <div class="detection-count">请检查检测结果</div>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🔍</div>
+                        <h4>未检测到目标</h4>
+                        <p>请先进行目标检测</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            #}
+
+            <div class="card llm-card">
+                <div class="card-header smart-detect-header">
+                    <h4>🤖 智能检测</h4>
+                    <button type="button" class="btn-purple" id="orb-detect-btn">检测</button>
+                </div>
+                <div class="card-content llm-content">
+                    <div class="result-area" id="orb-result">请先上传样本图片，然后点击“检测”获取候选菌种。</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第三行：MALDI-TOF质谱检测 -->
+<div class="row maldi-row">
+            <div class="card maldi-chart-card">
+                <div class="card-header">
+                    <h4>📊 MALDI-TOF质谱图</h4>
+                </div>
+                <div class="card-content chart-content">
+                    <div class="maldi-upload-section">
+                        <div class="input-row">
+                            <input type="file" accept=".txt"
+                                   class="file-input" id="maldi-txt-input">
+                            <button type="button" class="btn-info" id="maldi-generate-btn">生成质谱图</button>
+                        </div>
+                        <div class="file-hint">请上传 MALDI-TOF TXT 格式文件</div>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-placeholder" id="maldi-chart-placeholder">
+                            <div class="chart-icon">📈</div>
+                            <div class="chart-info">
+                                <h4>质谱分析图</h4>
+                                <p>请上传 TXT 文件并生成质谱图</p>
+                                <p style="font-size: 12px; margin-top: 5px;">支持：TXT 格式</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card maldi-result-card">
+                <div class="card-header">
+                    <h4>🔬 MALDI-TOF检测结果</h4>
+                </div>
+                <div class="card-content result-content">
+                    <!-- 初始状态：显示提示信息 -->
+                    <div class="result-placeholder" id="maldi-result-placeholder">
+                        <div class="result-icon">📊</div>
+                        <div class="result-info-text">
+                            <h4>等待匹配结果</h4>
+                            <p>生成质谱图后，系统将自动匹配数据库中的菌种</p>
+                        </div>
+                    </div>
+                    <!-- 匹配结果容器（初始隐藏） -->
+                    <div class="maldi-match-results" id="maldi-match-results" style="display: none;">
+                        <!-- 结果将由JavaScript动态插入 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第四行：16S RNA检测 -->
+        <div class="row rna-row">
+            <div class="card rna-input-card">
+                <div class="card-header">
+                    <h4>🧬 16S RNA序列</h4>
+                </div>
+                <div class="card-content rna-content">
+                    <div class="rna-upload-section">
+                        <textarea
+                            class="rna-textarea"
+                            id="rna-sequence-input"
+                            placeholder="请粘贴 16S RNA 序列（FASTA 或纯序列格式）&#10;&#10;示例：&#10;ATGCGATCGATCGATCG...&#10;&#10;或&#10;>Sample_001&#10;ATGCGATCGATCGATCG..."></textarea>
+                        <div class="rna-actions">
+                            <button type="button" class="btn-success" id="rna-match-btn">匹配</button>
+                            <button type="button" class="btn-gray" id="rna-clear-btn">清空</button>
+                        </div>
+                        <div class="rna-hint">支持 FASTA 格式或纯序列文本</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card rna-result-card">
+                <div class="card-header">
+                    <h4>🔬 16S RNA检测结果</h4>
+                </div>
+                <div class="card-content result-content">
+                    <!-- 初始状态：显示提示信息 -->
+                    <div class="result-placeholder" id="rna-result-placeholder">
+                        <div class="result-icon">🧬</div>
+                        <div class="result-info-text">
+                            <h4>等待匹配结果</h4>
+                            <p>输入 16S RNA 序列后，系统将自动匹配数据库中的菌种</p>
+                        </div>
+                    </div>
+                    <!-- 匹配结果容器（初始隐藏） -->
+                    <div class="rna-match-results" id="rna-match-results" style="display: none;">
+                        <!-- 结果将由JavaScript动态插入 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="report-action-row">
+            <button type="button" class="btn-primary" id="view-report-btn">📄 查看报告</button>
+        </div>
+
+        <div class="report-modal" id="report-modal" style="display: none;">
+            <div class="report-modal-inner">
+                <div class="report-modal-header">
+                    <h4>检测报告</h4>
+                    <button type="button" class="btn-gray" id="close-report-btn">关闭</button>
+                </div>
+                <div class="report-modal-body" id="report-content"></div>
+                <div class="report-modal-footer">
+                    <button type="button" class="btn-info" id="export-report-pdf-btn">导出PDF</button>
+                    <button type="button" class="btn-success" id="save-report-btn">录入菌种数据库</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+<!-- 引入外部JavaScript文件 -->
+<script src="{{ url_for('static', filename='js/ai_detection.js') }}"></script>
+{% endblock %}

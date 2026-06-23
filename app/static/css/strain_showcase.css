@@ -1,0 +1,605 @@
+:root {
+    --surface: #fdfdfd;
+    --muted: #f4f6fb;
+    --border: #e0e5ec;
+    --primary: #1c7ed6;
+    --primary-dark: #155fa1;
+    --text-primary: #1c2235;
+    --text-secondary: #5c5f72;
+    --accent: #fab005;
+    --radius-lg: 14px;
+    --radius-md: 10px;
+    --transition-fast: 0.2s ease;
+}
+
+.strain-showcase {
+    min-height: 100vh;
+    background: linear-gradient(180deg, #eef3ff 0%, #fefefe 60%);
+    padding: 24px 36px 48px;
+    box-sizing: border-box;
+}
+
+.search-row {
+    margin-bottom: 20px;
+}
+
+.search-form {
+    display: flex;
+    max-width: 520px;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 6px;
+    box-shadow: 0 10px 30px rgba(28, 34, 53, 0.04);
+}
+
+.search-form input[type="text"] {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 16px;
+    padding: 10px 16px;
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.search-form button {
+    background: var(--primary);
+    border: none;
+    border-radius: var(--radius-md);
+    color: #fff;
+    padding: 10px 24px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.search-form button:hover {
+    background: var(--primary-dark);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 20px;
+}
+
+.strain-card {
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: 0 18px 40px rgba(28, 34, 53, 0.1);
+    border: 1px solid transparent;
+    transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.strain-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--primary);
+    box-shadow: 0 25px 45px rgba(28, 34, 53, 0.12);
+}
+
+.strain-card-image {
+    width: 100%;
+    height: 220px;
+    background-size: cover;
+    background-position: center;
+}
+
+.strain-card-body {
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.strain-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.strain-scientific {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.empty-state {
+    background: #fff;
+    border-radius: var(--radius-lg);
+    border: 1px dashed var(--border);
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-secondary);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.02);
+}
+
+.pagination {
+    margin-top: 28px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    font-size: 14px;
+}
+
+.pagination a {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    text-decoration: none;
+    color: var(--text-secondary);
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.pagination a:hover {
+    border-color: var(--border);
+}
+
+.pagination .active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+
+.pagination span {
+    color: var(--text-secondary);
+}
+
+/* detail page */
+.strain-detail {
+    background: #fff;
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 25px 60px rgba(17, 24, 39, 0.15);
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+}
+
+.strain-detail .row {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.medium-selector {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 20px;
+    align-items: flex-end;
+    justify-items: stretch;
+}
+
+.selector-meta {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    justify-self: start;
+    text-align: left !important;
+}
+
+.selector-meta h1 {
+    margin: 0;
+    font-size: 32px;
+    color: var(--text-primary);
+    text-align: left !important;
+}
+
+.selector-control {
+    justify-self: end;
+}
+
+.selector-control label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.summary {
+    color: var(--text-secondary);
+    margin-top: 4px;
+    text-align: left !important;
+}
+
+.selector-control select {
+    min-width: 240px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--muted);
+    color: var(--text-primary);
+}
+
+.strain-detail h3 {
+    margin: 0;
+    font-size: 20px;
+    color: var(--text-primary);
+}
+
+.strain-detail .row.main-row {
+    display: grid;
+    grid-template-columns: minmax(250px, 0.35fr) minmax(0, 0.65fr);
+    gap: 24px;
+    align-items: start;
+}
+
+.strain-detail .main-image {
+    max-width: 320px;
+    background: var(--muted);
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+/* 调整图片大小 */
+.strain-detail .main-image img {
+    width: 100%;
+    height: 280px;
+    object-fit: cover;
+}
+
+.strain-detail .growth-cycle {
+    gap: 12px;
+}
+
+.strain-detail .growth-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+    gap: 14px;
+}
+
+.strain-detail .growth-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    text-align: center;
+    border-radius: 10px;
+    border: 1px solid rgba(28, 34, 53, 0.08);
+    background: #f9fafb;
+}
+
+/* 调整生长周期图片大小 */
+.strain-detail .growth-card img {
+    height: 220px;
+    width: 100%;
+    border-radius: 6px;
+    object-fit: cover;
+}
+
+.strain-detail .growth-card small {
+    color: var(--text-secondary);
+}
+
+.placeholder-box {
+    height: 80px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(200, 200, 200, 0.4));
+}
+
+.row.taxonomy-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 260px;
+    gap: 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    background: var(--muted);
+}
+
+.taxonomy-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.taxonomy-column {
+    background: #fff;
+    border: 1px solid rgba(28, 34, 53, 0.08);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.taxonomy-line {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    text-align: left;
+}
+
+.taxonomy-line-label {
+    font-size: 14px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    min-width: 72px;
+}
+
+.taxonomy-line-value {
+    font-size: 15px;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.taxonomy-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.gram-stain-panel {
+    background: #fff;
+    border: 1px solid rgba(28, 34, 53, 0.08);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.gram-stain-panel img {
+    width: 100%;
+    height: 170px;
+    object-fit: cover;
+    border-radius: 8px;
+}
+
+.row.fingerprint,
+.row.morphology,
+.row.medium {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    background: var(--muted);
+}
+
+.row.morphology {
+    min-height: 280px;
+}
+
+.row.fingerprint img {
+    width: 100%;
+    max-height: 240px;
+    object-fit: contain;
+    border-radius: 14px;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.morphology-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.morphology-item {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 12px 14px;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid rgba(28, 34, 53, 0.08);
+    font-size: 15px;
+    gap: 12px;
+    text-align: left !important;
+}
+
+.morphology-item .label {
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 120px;
+    text-align: left !important;
+}
+
+.morphology-item span:last-child {
+    color: var(--text-primary);
+    text-align: left !important;
+}
+
+.medium-card h4 {
+    margin: 0 0 8px;
+    font-size: 18px;
+}
+
+.medium-card div {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.medium-card.placeholder {
+    justify-content: center;
+    min-height: 120px;
+}
+
+.medium-card + .medium-card {
+    margin-top: 12px;
+}
+
+.previewable-image {
+    cursor: zoom-in;
+}
+
+.image-lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.82);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    padding: 30px;
+    box-sizing: border-box;
+}
+
+.image-lightbox.is-open {
+    display: flex;
+}
+
+.image-lightbox img {
+    max-width: min(1200px, 92vw);
+    max-height: 90vh;
+    border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 24px;
+    width: 42px;
+    height: 42px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+@media (max-width: 900px) {
+    .strain-showcase {
+        padding: 20px;
+    }
+
+    .strain-detail .row.main-row {
+        grid-template-columns: 1fr;
+    }
+
+    .row.taxonomy-card {
+        grid-template-columns: 1fr;
+    }
+
+    .taxonomy-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .selector-meta h1 {
+        font-size: 28px;
+    }
+}
+
+@media (max-width: 600px) {
+    .search-form {
+        flex-direction: column;
+    }
+
+    .search-form button {
+        width: 100%;
+    }
+}
+
+/* ===== 基因序列卡片样式 ===== */
+.row.gene-sequence {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    background: var(--muted);
+}
+
+.row.gene-sequence h3 {
+    margin: 0 0 16px;
+    font-size: 20px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.sequence-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.sequence-header {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 12px 14px;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid rgba(28, 34, 53, 0.08);
+}
+
+.sequence-info {
+    font-size: 15px;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.sequence-box {
+    padding: 16px;
+    background: #ffffff;
+    border: 1px solid rgba(28, 34, 53, 0.08);
+    border-radius: 10px;
+    font-family: 'Courier New', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    color: #2d3748;
+    word-break: break-all;
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow-y: auto;
+    user-select: all;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.sequence-box::-webkit-scrollbar {
+    width: 8px;
+}
+
+.sequence-box::-webkit-scrollbar-track {
+    background: #f4f6fb;
+    border-radius: 4px;
+}
+
+.sequence-box::-webkit-scrollbar-thumb {
+    background: #c0c5d0;
+    border-radius: 4px;
+}
+
+.sequence-box::-webkit-scrollbar-thumb:hover {
+    background: #a0a5b0;
+}
+
+.no-data {
+    color: var(--text-secondary);
+    font-size: 15px;
+    text-align: center;
+    padding: 20px;
+    margin-top: 12px;
+}
+
+/* Toast 动画 */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}

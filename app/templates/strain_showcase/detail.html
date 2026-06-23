@@ -1,0 +1,244 @@
+{% extends "layout.html" %}
+{% block title %}菌种展示 - 详情{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/strain_showcase.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="strain-detail">
+    <div class="row medium-selector">
+        <div class="selector-meta">
+            <h1>
+                {{ strain.name }}
+                {% if strain.scientific_name %}
+                <span class="scientific-inline">（{{ strain.scientific_name }}）</span>
+                {% endif %}
+            </h1>
+            {% if strain.summary %}
+            <p class="summary">{{ strain.summary }}</p>
+            {% endif %}
+        </div>
+        {% if recommended_mediums %}
+        <div class="selector-control">
+            <label for="medium-selector">切换培养基</label>
+            <select id="medium-selector">
+                {% for link in recommended_mediums %}
+                <option value="{{ link.medium_id }}"
+                        {% if loop.first %}selected{% endif %}
+                        data-medium-id="{{ link.medium_id }}"
+                        data-image="{% if 'image_path' in link.medium.__table__.columns %}{{ link.medium.image_path or strain.main_image or url_for('static', filename='uploads/placeholder.png') }}{% else %}{{ strain.main_image or url_for('static', filename='uploads/placeholder.png') }}{% endif %}">
+                    {{ link.medium.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="row main-row">
+        <div class="column main-image">
+            <img class="previewable-image" id="medium-main-image" src="{{ (recommended_mediums and recommended_mediums[0].medium and ('image_path' in recommended_mediums[0].medium.__table__.columns and recommended_mediums[0].medium.image_path) and recommended_mediums[0].medium.image_path) or strain.main_image or url_for('static', filename='uploads/placeholder.png') }}" alt="{{ strain.name }}">
+        </div>
+        <div class="column growth-cycle">
+            <h3>生长周期</h3>
+            <div class="growth-grid">
+                {% set cycle_count = growth_cycles|length %}
+                {% for cycle in growth_cycles %}
+                <div class="growth-card">
+                    <img class="previewable-image" src="{{ cycle.image_path or url_for('static', filename='uploads/placeholder.png') }}" alt="{{ cycle.day_number * 24 }}h">
+                    <div>{{ cycle.day_number * 24 }}h</div>
+                </div>
+                {% endfor %}
+                {% set placeholders = 3 - cycle_count if cycle_count < 3 else 0 %}
+                {% for _ in range(placeholders) %}
+                <div class="growth-card placeholder">
+                    <div class="placeholder-box"></div>
+                    <div>暂无</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row taxonomy-card">
+        <div class="taxonomy-columns">
+            <div class="taxonomy-column">
+                <div class="taxonomy-line"><span class="taxonomy-line-label">拉丁学名:</span><span class="taxonomy-line-value">{{ taxonomy_info.latin_name }}</span></div>
+                <div class="taxonomy-line"><span class="taxonomy-line-label">别名:</span><span class="taxonomy-line-value">{{ taxonomy_info.alias }}</span></div>
+                <div class="taxonomy-line"><span class="taxonomy-line-label">中文学名:</span><span class="taxonomy-line-value">{{ taxonomy_info.chinese_name }}</span></div>
+            </div>
+            <div class="taxonomy-column">
+                <div class="taxonomy-line"><span class="taxonomy-line-label">科:</span><span class="taxonomy-line-value">{{ taxonomy_info.family_name }}</span></div>
+                <div class="taxonomy-line"><span class="taxonomy-line-label">属:</span><span class="taxonomy-line-value">{{ taxonomy_info.genus_name }}</span></div>
+                <div class="taxonomy-line"><span class="taxonomy-line-label">种:</span><span class="taxonomy-line-value">{{ taxonomy_info.species_name }}</span></div>
+            </div>
+        </div>
+        <div class="gram-stain-panel">
+            <div class="taxonomy-label">革兰氏染色图</div>
+            <img class="previewable-image" src="{{ gram_stain_image_url }}" alt="Gram stain">
+        </div>
+    </div>
+
+    <div class="row fingerprint">
+        <h3>菌种指纹图谱</h3>
+        <img class="previewable-image" src="{{ fingerprint_image_url }}" alt="Fingerprint">
+    </div>
+
+    <div class="row gene-sequence">
+        <h3>16S rRNA 基因序列</h3>
+        {% if strain_16s_sequence %}
+        <div class="sequence-container">
+            <div class="sequence-header">
+                <span class="sequence-info">序列长度: {{ strain_16s_sequence|length }} bp</span>
+            </div>
+            <div class="sequence-box" id="sequence-box">{{ strain_16s_sequence }}</div>
+        </div>
+        {% else %}
+        <p class="no-data">暂无基因序列数据。</p>
+        {% endif %}
+    </div>
+
+    <div class="row morphology">
+        <h3>详细形态学特征</h3>
+        {% if morphology %}
+        <div class="morphology-list">
+            <div class="morphology-item">
+                <span class="label">菌落大小：</span>
+                <span>{{ morphology.colony_size or '-' }}</span>
+            </div>
+            <div class="morphology-item">
+                <span class="label">菌落轮廓：</span>
+                <span>{{ morphology.colony_shape or '-' }}</span>
+            </div>
+            <div class="morphology-item">
+                <span class="label">菌落边缘：</span>
+                <span>{{ morphology.colony_edge or '-' }}</span>
+            </div>
+            <div class="morphology-item">
+                <span class="label">菌落颜色：</span>
+                <span>{{ morphology.colony_color or '-' }}</span>
+            </div>
+            <div class="morphology-item">
+                <span class="label">菌落质地：</span>
+                <span>{{ morphology.colony_texture or '-' }}</span>
+            </div>
+            <div class="morphology-item">
+                <span class="label">菌落高度：</span>
+                <span>{{ morphology.colony_elevation or '-' }}</span>
+            </div>
+            <div class="morphology-item">
+                <span class="label">菌落透明度：</span>
+                <span>{{ morphology.colony_opacity or '-' }}</span>
+            </div>
+            <div class="morphology-item">
+                <span class="label">细胞形状：</span>
+                <span>{{ morphology.cell_shape or '-' }}</span>
+            </div>
+        </div>
+        {% else %}
+        <p>暂无形态学数据。</p>
+        {% endif %}
+    </div>
+
+    <div class="row medium" id="medium-detail">
+        <h3>生长条件</h3>
+        {% if recommended_mediums %}
+        {% for link in recommended_mediums %}
+        <div class="medium-card" data-medium-id="{{ link.medium_id }}" {% if not loop.first %}style="display:none"{% endif %}>
+            <h4>{{ link.medium.name }}</h4>
+            <div>培养时长：{{ link.medium.culture_time or '-' }}</div>
+            <div>培养温度：{{ link.medium.temperature or '-' }}</div>
+            <div>操作要点：{{ link.medium.usage_notes or '-' }}</div>
+            <div>备注：{{ link.notes or '-' }}</div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p>暂无推荐培养基。</p>
+        {% endif %}
+    </div>
+    <div class="row medium" id="medium-detail">
+        <h3>来源</h3>
+        {% if common_sources %}
+        <div class="tag-list">
+            {% for source in common_sources %}
+            <span class="tag">{{ source }}</span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p>暂无常见来源</p>
+        {% endif %}
+    </div>
+</div>
+
+<div id="image-lightbox" class="image-lightbox" aria-hidden="true">
+    <button type="button" class="lightbox-close" id="lightbox-close" aria-label="关闭预览">×</button>
+    <img id="lightbox-image" src="" alt="图片预览">
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const selector = document.getElementById("medium-selector");
+    const mainImage = document.getElementById("medium-main-image");
+    const mediumCards = Array.from(document.querySelectorAll("#medium-detail .medium-card"));
+    const previewableImages = Array.from(document.querySelectorAll(".previewable-image"));
+    const lightbox = document.getElementById("image-lightbox");
+    const lightboxImage = document.getElementById("lightbox-image");
+    const lightboxClose = document.getElementById("lightbox-close");
+
+    function showMediumCard(mediumId) {
+        mediumCards.forEach(card => {
+            card.style.display = card.dataset.mediumId === mediumId ? "block" : "none";
+        });
+    }
+
+    function openLightbox(src, altText) {
+        lightboxImage.src = src;
+        lightboxImage.alt = altText || "图片预览";
+        lightbox.classList.add("is-open");
+        lightbox.setAttribute("aria-hidden", "false");
+    }
+
+    function closeLightbox() {
+        lightbox.classList.remove("is-open");
+        lightbox.setAttribute("aria-hidden", "true");
+        lightboxImage.src = "";
+    }
+
+    previewableImages.forEach(image => {
+        image.addEventListener("click", () => {
+            if (image.src) {
+                openLightbox(image.src, image.alt);
+            }
+        });
+    });
+
+    lightbox.addEventListener("click", event => {
+        if (event.target === lightbox) {
+            closeLightbox();
+        }
+    });
+
+    lightboxClose.addEventListener("click", closeLightbox);
+
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && lightbox.classList.contains("is-open")) {
+            closeLightbox();
+        }
+    });
+
+    if (!selector) {
+        return;
+    }
+
+    selector.addEventListener("change", event => {
+        const option = event.target.selectedOptions[0];
+        const image = option.dataset.image;
+        if (image) {
+            mainImage.src = image;
+        }
+        showMediumCard(option.value);
+    });
+});
+</script>
+{% endblock %}

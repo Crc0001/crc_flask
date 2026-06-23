@@ -1,0 +1,44 @@
+<form id="search-form" method="get" class="search-box">
+    <div class="search-row">
+        <div class="search-item">
+            <label>菌种名称</label>
+            <input class="input-normal" type="text" name="strain_name"
+                   value="{{ search.strain_name }}" placeholder="输入菌种名称">
+        </div>
+
+        <div class="search-item">
+            <label>采集地点</label>
+            <select class="input-normal" name="location">
+                <option value="">全部</option>
+                {% for loc in locations %}
+                <option value="{{ loc }}" {% if search.location == loc %}selected{% endif %}>{{ loc }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="search-item">
+            <label>关键词</label>
+            <input class="input-wide" type="text" name="keyword"
+                   placeholder="样品编号/采集人" value="{{ search.keyword }}">
+        </div>
+    </div>
+
+    <div class="search-row">
+        <div class="search-item">
+            <label>开始日期</label>
+            <input class="input-date" type="date" name="start_date"
+                   value="{{ search.start_date }}">
+        </div>
+
+        <div class="search-item">
+            <label>结束日期</label>
+            <input class="input-date" type="date" name="end_date"
+                   value="{{ search.end_date }}">
+        </div>
+
+        <div class="search-actions">
+            <button type="submit" class="btn btn-search">查询</button>
+            <a href="{{ url_for('strain_db.index') }}" class="btn btn-reset">重置</a>
+        </div>
+    </div>
+</form>

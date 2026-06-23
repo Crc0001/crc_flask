@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block title %}菌种数据库{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/strain_db.css') }}">
+<div class="strain-page">
+
+    <!-- 页面标题 -->
+    <div class="page-header-simple">
+        <div class="page-title">菌种数据库</div>
+        <div class="page-desc">样品信息查询、编辑与管理</div>
+    </div>
+
+    <!-- 搜索表单 -->
+    {% include "strain_db/_search_form.html" %}
+
+    <!-- 数据表格 -->
+    <div id="table-container">
+        {% include "strain_db/_table.html" %}
+    </div>
+
+    <!-- 弹窗 -->
+    {% include "strain_db/_modal_wrapper.html" %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/strain_db.js') }}"></script>
+{% endblock %}

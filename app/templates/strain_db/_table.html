@@ -1,0 +1,100 @@
+<div class="table-box">
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>样品编号</th>
+                    <th>菌种名称</th>
+                    <th>置信度分数</th>
+                    <th>采集日期</th>
+                    <th>采集人</th>
+                    <th>采集地点</th>
+                    <th>检测时间</th>
+                    <th>质谱图</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if samples %}
+                    {% for r in samples %}
+                    <tr data-id="{{ r.id }}">
+                        <td>{{ r.sample_code }}</td>
+                        <td>{{ r.final_strain_name or "未鉴定" }}</td>
+                        <td>
+                            {% if r.final_confidence is not none %}
+                                {{ "%.1f"|format(r.final_confidence * 100) }}%
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>{{ r.collect_date.strftime('%Y-%m-%d') if r.collect_date else '' }}</td>
+                        <td>{{ r.collector }}</td>
+                        <td>{{ r.collect_location }}</td>
+                        <td>{{ r.last_detect_time.strftime('%Y-%m-%d %H:%M') if r.last_detect_time else '-' }}</td>
+                        <!-- 质谱图列 -->
+                        <td>{% if r.mass_spectrum %}
+                                <img src="{{ url_for('strain_db.get_mass_spectrum', sample_id=r.id) }}"
+                                     alt="质谱图"
+                                     class="mass-spectrum-thumbnail"
+                                     style="width: 60px; height: 60px; object-fit: cover; cursor: pointer; border-radius: 4px;"
+                                     data-src="{{ url_for('strain_db.get_mass_spectrum', sample_id=r.id) }}">
+                            {% else %}
+                                <span style="color: #999; font-size: 13px;">无</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="action-btn edit-btn" data-id="{{ r.id }}">编辑</button>
+                            <button class="action-btn delete-btn" data-id="{{ r.id }}">删除</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="9" class="empty">暂无数据</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 分页导航 -->
+    {% if pagination and pagination.pages > 1 %}
+    <div class="pagination">
+        <div class="pagination-info">
+            共 {{ pagination.total }} 条，第 {{ pagination.page }}/{{ pagination.pages }} 页
+        </div>
+
+        <div class="pagination-controls">
+            <!-- 上一页 -->
+            {% if pagination.has_prev %}
+            <a href="?page={{ pagination.prev_num }}{{ query_string }}"
+               class="pagination-btn">上一页</a>
+            {% else %}
+            <span class="pagination-btn disabled">上一页</span>
+            {% endif %}
+
+            <!-- 页码 -->
+            {% for page_num in pagination.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+                {% if page_num %}
+                    {% if page_num == pagination.page %}
+                    <span class="pagination-page active">{{ page_num }}</span>
+                    {% else %}
+                    <a href="?page={{ page_num }}{{ query_string }}"
+                       class="pagination-page">{{ page_num }}</a>
+                    {% endif %}
+                {% else %}
+                    <span class="pagination-ellipsis">...</span>
+                {% endif %}
+            {% endfor %}
+
+            <!-- 下一页 -->
+            {% if pagination.has_next %}
+            <a href="?page={{ pagination.next_num }}{{ query_string }}"
+               class="pagination-btn">下一页</a>
+            {% else %}
+            <span class="pagination-btn disabled">下一页</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>

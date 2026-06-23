@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}AI 菌种分析系统{% endblock %}</title>
+
+    <!-- 全局基础样式 -->
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        .sidebar {
+            width: 220px;
+            background: #1e272e;
+            color: white;
+            padding-top: 20px;
+        }
+        .sidebar h2 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .menu a {
+            display: block;
+            padding: 12px 20px;
+            color: white;
+            text-decoration: none;
+        }
+        .menu a:hover {
+            background: #485460;
+        }
+        .content {
+            flex: 1;
+            padding: 20px;
+            background: #f1f2f6;
+            overflow: auto;
+        }
+    </style>
+
+    <!-- ✅ 页面级 CSS（比如 strain_db.css） -->
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<div class="sidebar">
+    <h2>AI智能微生物管理系统</h2>
+    <div class="menu">
+        <a href="/ai_detection">🧫 菌种检测</a>
+        <a href="/strain_db">📚 菌种数据库</a>
+        <a href="/analysis">📈 趋势分析</a>
+        <a href="/ai_advice">🤖 AI 建议</a>
+        <a href="/strain_showcase">🌱 菌种知识库</a>
+    </div>
+</div>
+
+<div class="content">
+    {% block content %}{% endblock %}
+</div>
+
+<!-- ✅ 页面级 JS（比如 strain_db.js） -->
+{% block extra_js %}{% endblock %}
+
+</body>
+</html>

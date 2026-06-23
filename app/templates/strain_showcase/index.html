@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block title %}菌种展示{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/strain_showcase.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="strain-showcase">
+    <div class="search-row">
+        <form method="get" class="search-form">
+            <input type="text" name="q" value="{{ query }}" placeholder="搜索菌属 / 菌种 / 拉丁名" />
+            <button type="submit">搜索</button>
+        </form>
+    </div>
+
+    <div class="grid">
+        {% for strain in strains %}
+        <a class="strain-card" href="{{ url_for('strain_showcase.detail', strain_id=strain.id) }}">
+            <div class="strain-card-image" style="background-image: url('{{ strain.main_image or url_for('static', filename='uploads/placeholder.png') }}');"></div>
+            <div class="strain-card-body">
+                <div class="strain-name">{{ strain.name }}</div>
+                <div class="strain-scientific">{{ strain.scientific_name }}</div>
+            </div>
+        </a>
+        {% endfor %}
+        {% if strains|length == 0 %}
+        <div class="empty-state">暂无匹配菌种</div>
+        {% endif %}
+    </div>
+
+    <div class="pagination">
+        {% if pagination.has_prev %}
+        <a href="?q={{ query }}&page={{ pagination.prev_num }}">上一页</a>
+        {% endif %}
+        {% if start_page > 1 %}
+        <span>...</span>
+        {% endif %}
+        {% for p in page_range %}
+        <a href="?q={{ query }}&page={{ p }}" class="{% if pagination.page == p %}active{% endif %}">{{ p }}</a>
+        {% endfor %}
+        {% if end_page < total_pages %}
+        <span>...</span>
+        {% endif %}
+        {% if pagination.has_next %}
+        <a href="?q={{ query }}&page={{ pagination.next_num }}">下一页</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

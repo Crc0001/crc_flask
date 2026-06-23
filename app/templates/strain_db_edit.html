@@ -1,0 +1,48 @@
+{% extends "layout.html" %}
+{% block title %}编辑样品{% endblock %}
+
+{% block content %}
+<h2>✏️ 编辑样品信息</h2>
+
+<form method="post">
+    <p>
+        <label>样品编号</label><br>
+        <input type="text" name="sample_code" value="{{ sample.sample_code }}" required>
+    </p>
+
+    <p>
+        <label>采集日期</label><br>
+        <input type="date" name="collect_date" value="{{ sample.collect_date }}">
+    </p>
+
+    <p>
+        <label>采集人</label><br>
+        <input type="text" name="collector" value="{{ sample.collector }}">
+    </p>
+
+    <p>
+        <label>采集地点</label><br>
+        <input type="text" name="collect_location" value="{{ sample.collect_location }}">
+    </p>
+
+    <hr>
+
+    <!-- ===== 只读展示（不可编辑）===== -->
+    <p>
+        <strong>模型判定菌种：</strong>
+        {{ sample.final_strain_name or "暂无" }}
+    </p>
+
+    <p>
+        <strong>模型置信度：</strong>
+        {% if sample.final_confidence %}
+            {{ "%.2f"|format(sample.final_confidence * 100) }}%
+        {% else %}
+            -
+        {% endif %}
+    </p>
+
+    <button type="submit">💾 保存</button>
+    <a href="{{ url_for('strain_db.index') }}">取消</a>
+</form>
+{% endblock %}
