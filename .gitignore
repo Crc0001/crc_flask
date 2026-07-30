@@ -1,0 +1,55 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments and secrets
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and local process output
+*.log
+*.pid
+
+# Flask runtime uploads and generated results
+app/static/uploads/
+app/static/results/
+app/static/maldi_uploads/
+app/static/maldi_results/
+
+# Downloaded database payloads and translation audit output
+data/bacdive/
+data/bacdive_full/
+data/silva/
+data/bacdive_chinese_translation.jsonl
+
+# HwishAI reproducible training intermediates
+HwishAI/**/embeddings/
+HwishAI/**/results/probabilities_*.npz
+HwishAI/model/embeddings.npy
+HwishAI/model/labels.npy
+HwishAI/model/image_paths.json
+HwishAI/model/paths.json
+
+# Unrelated local scratch script
+/11.py

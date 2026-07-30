@@ -1,0 +1,191 @@
+{
+  "total": 173,
+  "correct_top1": 119,
+  "accuracy": 68.79,
+  "tier1": 23,
+  "tier2": 56,
+  "tier3": 94,
+  "per_species": {
+    "Acinetobacter seifertii": {
+      "correct": 7,
+      "total": 7
+    },
+    "Brachybacterium conglomeratum": {
+      "correct": 7,
+      "total": 7
+    },
+    "Burkholderia arboris": {
+      "correct": 5,
+      "total": 7
+    },
+    "Chryseobacterium indologenes": {
+      "correct": 7,
+      "total": 7
+    },
+    "Faucicola osloensis": {
+      "correct": 7,
+      "total": 7
+    },
+    "Micrococcus yunnanensis": {
+      "correct": 7,
+      "total": 7
+    },
+    "Sphingomonas leidyi": {
+      "correct": 4,
+      "total": 7
+    },
+    "Staphylococcus capitis": {
+      "correct": 5,
+      "total": 7
+    },
+    "Staphylococcus cohnii": {
+      "correct": 5,
+      "total": 7
+    },
+    "Staphylococcus hominis": {
+      "correct": 4,
+      "total": 7
+    },
+    "Acinetobacter lwoffii": {
+      "correct": 1,
+      "total": 5
+    },
+    "Aspergillus unguis": {
+      "correct": 5,
+      "total": 5
+    },
+    "Staphylococcus epidermidis": {
+      "correct": 1,
+      "total": 5
+    },
+    "Staphylococcus petrasii": {
+      "correct": 2,
+      "total": 5
+    },
+    "Stenotrophomonas maltophilia": {
+      "correct": 1,
+      "total": 5
+    },
+    "Acinetobacter oryzae": {
+      "correct": 2,
+      "total": 4
+    },
+    "Bacillus pumilus": {
+      "correct": 1,
+      "total": 4
+    },
+    "Arthrobacter gandavensis": {
+      "correct": 0,
+      "total": 3
+    },
+    "Bacillus cabrialesii": {
+      "correct": 3,
+      "total": 3
+    },
+    "Bacillus cereus": {
+      "correct": 3,
+      "total": 3
+    },
+    "Bacillus infantis": {
+      "correct": 3,
+      "total": 3
+    },
+    "Bacillus subtilis": {
+      "correct": 3,
+      "total": 3
+    },
+    "Brevibacillus agri": {
+      "correct": 0,
+      "total": 3
+    },
+    "Chryseobacterium hagamense": {
+      "correct": 2,
+      "total": 3
+    },
+    "Corynebacterium xerosis": {
+      "correct": 3,
+      "total": 3
+    },
+    "Enterobacter quasihormaechei": {
+      "correct": 3,
+      "total": 3
+    },
+    "Pantoea ananatis": {
+      "correct": 1,
+      "total": 3
+    },
+    "Priestia megaterium": {
+      "correct": 3,
+      "total": 3
+    },
+    "Pseudescherichia vulneris": {
+      "correct": 2,
+      "total": 3
+    },
+    "Serratia marcescens": {
+      "correct": 1,
+      "total": 3
+    },
+    "Staphylococcus ureilyticu": {
+      "correct": 2,
+      "total": 3
+    },
+    "Bacillus haynesii": {
+      "correct": 1,
+      "total": 2
+    },
+    "Bacillus manliponensis": {
+      "correct": 0,
+      "total": 2
+    },
+    "Bacillus piscis": {
+      "correct": 1,
+      "total": 2
+    },
+    "Bacillus thuringiensis": {
+      "correct": 1,
+      "total": 2
+    },
+    "Brachybacterium paraconglomeratum": {
+      "correct": 1,
+      "total": 2
+    },
+    "Brevundimonas huaxiensis": {
+      "correct": 2,
+      "total": 2
+    },
+    "Chryseobacterium mulctrae": {
+      "correct": 2,
+      "total": 2
+    },
+    "Enterococcus innesii": {
+      "correct": 2,
+      "total": 2
+    },
+    "Methylorubrum populi": {
+      "correct": 2,
+      "total": 2
+    },
+    "Pseudomonas parafulva": {
+      "correct": 2,
+      "total": 2
+    },
+    "Ralstonia pickettii": {
+      "correct": 0,
+      "total": 2
+    },
+    "Staphylococcus roterodami": {
+      "correct": 1,
+      "total": 2
+    },
+    "Staphylococcus taiwanensis": {
+      "correct": 2,
+      "total": 2
+    },
+    "Stenotrophomonas pavanii": {
+      "correct": 2,
+      "total": 2
+    }
+  },
+  "n_errors": 54
+}

@@ -1,243 +1,164 @@
 {% extends "layout.html" %}
-{% block title %}菌种展示 - 详情{% endblock %}
+{% block title %}{{ record.species_name or '菌株详情' }} - 微生物知识库{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/strain_showcase.css') }}">
 {% endblock %}
 
-{% block content %}
-<div class="strain-detail">
-    <div class="row medium-selector">
-        <div class="selector-meta">
-            <h1>
-                {{ strain.name }}
-                {% if strain.scientific_name %}
-                <span class="scientific-inline">（{{ strain.scientific_name }}）</span>
-                {% endif %}
-            </h1>
-            {% if strain.summary %}
-            <p class="summary">{{ strain.summary }}</p>
-            {% endif %}
-        </div>
-        {% if recommended_mediums %}
-        <div class="selector-control">
-            <label for="medium-selector">切换培养基</label>
-            <select id="medium-selector">
-                {% for link in recommended_mediums %}
-                <option value="{{ link.medium_id }}"
-                        {% if loop.first %}selected{% endif %}
-                        data-medium-id="{{ link.medium_id }}"
-                        data-image="{% if 'image_path' in link.medium.__table__.columns %}{{ link.medium.image_path or strain.main_image or url_for('static', filename='uploads/placeholder.png') }}{% else %}{{ strain.main_image or url_for('static', filename='uploads/placeholder.png') }}{% endif %}">
-                    {{ link.medium.name }}
-                </option>
-                {% endfor %}
-            </select>
-        </div>
-        {% endif %}
-    </div>
-
-    <div class="row main-row">
-        <div class="column main-image">
-            <img class="previewable-image" id="medium-main-image" src="{{ (recommended_mediums and recommended_mediums[0].medium and ('image_path' in recommended_mediums[0].medium.__table__.columns and recommended_mediums[0].medium.image_path) and recommended_mediums[0].medium.image_path) or strain.main_image or url_for('static', filename='uploads/placeholder.png') }}" alt="{{ strain.name }}">
-        </div>
-        <div class="column growth-cycle">
-            <h3>生长周期</h3>
-            <div class="growth-grid">
-                {% set cycle_count = growth_cycles|length %}
-                {% for cycle in growth_cycles %}
-                <div class="growth-card">
-                    <img class="previewable-image" src="{{ cycle.image_path or url_for('static', filename='uploads/placeholder.png') }}" alt="{{ cycle.day_number * 24 }}h">
-                    <div>{{ cycle.day_number * 24 }}h</div>
-                </div>
-                {% endfor %}
-                {% set placeholders = 3 - cycle_count if cycle_count < 3 else 0 %}
-                {% for _ in range(placeholders) %}
-                <div class="growth-card placeholder">
-                    <div class="placeholder-box"></div>
-                    <div>暂无</div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-    </div>
-
-    <div class="row taxonomy-card">
-        <div class="taxonomy-columns">
-            <div class="taxonomy-column">
-                <div class="taxonomy-line"><span class="taxonomy-line-label">拉丁学名:</span><span class="taxonomy-line-value">{{ taxonomy_info.latin_name }}</span></div>
-                <div class="taxonomy-line"><span class="taxonomy-line-label">别名:</span><span class="taxonomy-line-value">{{ taxonomy_info.alias }}</span></div>
-                <div class="taxonomy-line"><span class="taxonomy-line-label">中文学名:</span><span class="taxonomy-line-value">{{ taxonomy_info.chinese_name }}</span></div>
-            </div>
-            <div class="taxonomy-column">
-                <div class="taxonomy-line"><span class="taxonomy-line-label">科:</span><span class="taxonomy-line-value">{{ taxonomy_info.family_name }}</span></div>
-                <div class="taxonomy-line"><span class="taxonomy-line-label">属:</span><span class="taxonomy-line-value">{{ taxonomy_info.genus_name }}</span></div>
-                <div class="taxonomy-line"><span class="taxonomy-line-label">种:</span><span class="taxonomy-line-value">{{ taxonomy_info.species_name }}</span></div>
-            </div>
-        </div>
-        <div class="gram-stain-panel">
-            <div class="taxonomy-label">革兰氏染色图</div>
-            <img class="previewable-image" src="{{ gram_stain_image_url }}" alt="Gram stain">
-        </div>
-    </div>
-
-    <div class="row fingerprint">
-        <h3>菌种指纹图谱</h3>
-        <img class="previewable-image" src="{{ fingerprint_image_url }}" alt="Fingerprint">
-    </div>
-
-    <div class="row gene-sequence">
-        <h3>16S rRNA 基因序列</h3>
-        {% if strain_16s_sequence %}
-        <div class="sequence-container">
-            <div class="sequence-header">
-                <span class="sequence-info">序列长度: {{ strain_16s_sequence|length }} bp</span>
-            </div>
-            <div class="sequence-box" id="sequence-box">{{ strain_16s_sequence }}</div>
-        </div>
-        {% else %}
-        <p class="no-data">暂无基因序列数据。</p>
-        {% endif %}
-    </div>
-
-    <div class="row morphology">
-        <h3>详细形态学特征</h3>
-        {% if morphology %}
-        <div class="morphology-list">
-            <div class="morphology-item">
-                <span class="label">菌落大小：</span>
-                <span>{{ morphology.colony_size or '-' }}</span>
-            </div>
-            <div class="morphology-item">
-                <span class="label">菌落轮廓：</span>
-                <span>{{ morphology.colony_shape or '-' }}</span>
-            </div>
-            <div class="morphology-item">
-                <span class="label">菌落边缘：</span>
-                <span>{{ morphology.colony_edge or '-' }}</span>
-            </div>
-            <div class="morphology-item">
-                <span class="label">菌落颜色：</span>
-                <span>{{ morphology.colony_color or '-' }}</span>
-            </div>
-            <div class="morphology-item">
-                <span class="label">菌落质地：</span>
-                <span>{{ morphology.colony_texture or '-' }}</span>
-            </div>
-            <div class="morphology-item">
-                <span class="label">菌落高度：</span>
-                <span>{{ morphology.colony_elevation or '-' }}</span>
-            </div>
-            <div class="morphology-item">
-                <span class="label">菌落透明度：</span>
-                <span>{{ morphology.colony_opacity or '-' }}</span>
-            </div>
-            <div class="morphology-item">
-                <span class="label">细胞形状：</span>
-                <span>{{ morphology.cell_shape or '-' }}</span>
-            </div>
-        </div>
-        {% else %}
-        <p>暂无形态学数据。</p>
-        {% endif %}
-    </div>
-
-    <div class="row medium" id="medium-detail">
-        <h3>生长条件</h3>
-        {% if recommended_mediums %}
-        {% for link in recommended_mediums %}
-        <div class="medium-card" data-medium-id="{{ link.medium_id }}" {% if not loop.first %}style="display:none"{% endif %}>
-            <h4>{{ link.medium.name }}</h4>
-            <div>培养时长：{{ link.medium.culture_time or '-' }}</div>
-            <div>培养温度：{{ link.medium.temperature or '-' }}</div>
-            <div>操作要点：{{ link.medium.usage_notes or '-' }}</div>
-            <div>备注：{{ link.notes or '-' }}</div>
-        </div>
+{% macro render_value(value) %}
+    {% if value is mapping %}
+    <dl class="json-map">
+        {% for key, child in value.items() %}
+        <div><dt>{{ key }}</dt><dd>{{ render_value(child) }}</dd></div>
         {% endfor %}
-        {% else %}
-        <p>暂无推荐培养基。</p>
-        {% endif %}
+    </dl>
+    {% elif value is sequence and value is not string %}
+    <div class="json-list">
+        {% for child in value %}<div class="json-list-item">{{ render_value(child) }}</div>{% endfor %}
     </div>
-    <div class="row medium" id="medium-detail">
-        <h3>来源</h3>
-        {% if common_sources %}
-        <div class="tag-list">
-            {% for source in common_sources %}
-            <span class="tag">{{ source }}</span>
+    {% elif value is sameas true %}是
+    {% elif value is sameas false %}否
+    {% elif value is none %}-
+    {% else %}{{ value }}
+    {% endif %}
+{% endmacro %}
+
+{% block content %}
+<main class="knowledge-page detail-page">
+    <a class="back-link" href="{{ url_for('strain_showcase.index') }}"><span aria-hidden="true">←</span> 返回知识库</a>
+
+    <header class="detail-header">
+        <div class="detail-heading">
+            <div class="record-flags">
+                <span class="domain-badge">{{ record.domain_name or '未分类' }}</span>
+                {% if (record.type_strain or '')|lower == 'yes' %}<span class="type-badge">模式菌株</span>{% endif %}
+                {% if environment_strains %}<span class="local-badge">本地环境库增强</span>{% endif %}
+            </div>
+            <h1>{{ record.species_name or record.full_scientific_name or ('BacDive ' ~ record.bacdive_id) }}</h1>
+            {% if record.species_name_zh %}<p class="detail-chinese-name">{{ record.species_name_zh }}</p>{% endif %}
+            {% if record.full_scientific_name and record.full_scientific_name != record.species_name %}
+            <p class="full-name">{{ record.full_scientific_name }}</p>
+            {% endif %}
+            {% if record.description %}<p class="detail-summary">{{ record.description }}</p>{% endif %}
+        </div>
+        <dl class="identity-panel">
+            <div><dt>BacDive ID</dt><dd>{{ record.bacdive_id }}</dd></div>
+            <div><dt>DSM 编号</dt><dd>{{ record.dsm_number or '-' }}</dd></div>
+            <div><dt>菌株编号</dt><dd>{{ record.strain_designation or '-' }}</dd></div>
+            <div><dt>NCBI Tax ID</dt><dd>{{ record.ncbi_tax_id or '-' }}</dd></div>
+            {% if record.doi %}<div><dt>DOI</dt><dd>{{ record.doi }}</dd></div>{% endif %}
+        </dl>
+    </header>
+
+    <section class="detail-band taxonomy-band">
+        <div class="section-heading"><h2>分类信息</h2><span>{{ record.ncbi_matching_level or 'BacDive taxonomy' }}</span></div>
+        <ol class="taxonomy-path">
+            {% for label, value in taxonomy %}
+            <li><span>{{ label }}</span><strong>{{ value or '-' }}</strong></li>
+            {% endfor %}
+        </ol>
+        {% if strain_history %}
+        <div class="history-line"><strong>菌株历史</strong><span>{{ render_value(strain_history) }}</span></div>
+        {% endif %}
+    </section>
+
+    {% if environment_strains %}
+    <section class="detail-band environment-band">
+        <div class="section-heading">
+            <div><p class="eyebrow">本地环境菌数据库</p><h2>本地增强资料</h2></div>
+            <span>{{ environment_strains|length }} 条匹配</span>
+        </div>
+        {% for strain in environment_strains %}
+        <article class="environment-record">
+            <div class="environment-images">
+                <img src="{{ static_image_url(strain.main_image) }}" alt="{{ strain.name }}">
+                <img src="{{ static_image_url(strain.gram_stain_image) }}" alt="{{ strain.name }} 革兰氏染色">
+            </div>
+            <div class="environment-content">
+                <h3>{{ strain.name }}</h3>
+                <p class="scientific-name">{{ strain.scientific_name }}</p>
+                {% if strain.summary %}<p>{{ strain.summary }}</p>{% endif %}
+                <dl class="local-facts">
+                    <div><dt>分类</dt><dd>{{ strain.category or '-' }}</dd></div>
+                    <div><dt>来源</dt><dd>{{ strain.sources|map(attribute='location')|select|join('、') or '-' }}</dd></div>
+                    <div><dt>16S</dt><dd>{% if strain.strain_16s_records %}{{ strain.strain_16s_records[0].strain_16s|length }} bp{% else %}-{% endif %}</dd></div>
+                    <div><dt>培养基</dt><dd>{{ strain.media_links|map(attribute='medium.name')|select|join('、') or '-' }}</dd></div>
+                </dl>
+                {% if strain.growth_cycles %}
+                <div class="growth-strip">
+                    {% for cycle in strain.growth_cycles[:3] %}
+                    <figure><img src="{{ static_image_url(cycle.image_path) }}" alt="培养第 {{ cycle.day_number }} 天"><figcaption>第 {{ cycle.day_number }} 天</figcaption></figure>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </article>
+        {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="detail-band silva-band" id="silva-16s">
+        <div class="section-heading">
+            <div><p class="eyebrow">SILVA 138.2 SSURef NR99</p><h2>SILVA 16S rRNA 序列</h2></div>
+            <span>{{ silva_sequences|length }} 条代表序列</span>
+        </div>
+        {% if silva_sequences %}
+        <p class="silva-match-note">
+            按 BacDive 物种学名 <strong>{{ record.species_name }}</strong> 精确关联。以下是同物种参考序列，
+            不代表当前 BacDive 菌株的菌株级实测序列。
+        </p>
+        <div class="silva-sequence-list">
+            {% for item in silva_sequences %}
+            <details class="silva-sequence" {% if loop.first %}open{% endif %}>
+                <summary>
+                    <span><strong>{{ item.accession }}</strong><small>{{ item.organism_name }}</small></span>
+                    <span class="silva-sequence-meta">{{ item.sequence_length }} nt</span>
+                </summary>
+                <div class="silva-sequence-body">
+                    <dl>
+                        <div><dt>序列标识</dt><dd>{{ item.sequence_identifier }}</dd></div>
+                        <div><dt>分类路径</dt><dd>{{ item.taxonomy }}</dd></div>
+                    </dl>
+                    <div class="sequence-toolbar">
+                        <span>RNA 序列</span>
+                        <button type="button" class="copy-sequence" data-sequence-id="silva-sequence-{{ item.id }}">复制序列</button>
+                    </div>
+                    <pre id="silva-sequence-{{ item.id }}">{{ item.sequence }}</pre>
+                </div>
+            </details>
             {% endfor %}
         </div>
         {% else %}
-        <p>暂无常见来源</p>
+        <div class="silva-empty">当前 BacDive 记录没有找到高可信的同物种 SILVA 序列。</div>
         {% endif %}
-    </div>
-</div>
+    </section>
 
-<div id="image-lightbox" class="image-lightbox" aria-hidden="true">
-    <button type="button" class="lightbox-close" id="lightbox-close" aria-label="关闭预览">×</button>
-    <img id="lightbox-image" src="" alt="图片预览">
-</div>
+    <section class="detail-band data-band">
+        <div class="section-heading"><h2>BacDive 完整资料</h2><span>公开数据</span></div>
+        <div class="data-sections">
+            {% for title, value in data_sections if value %}
+            <details class="data-section" {% if loop.index <= 3 %}open{% endif %}>
+                <summary>{{ title }}<span aria-hidden="true">＋</span></summary>
+                <div class="data-section-body">{{ render_value(value) }}</div>
+            </details>
+            {% endfor %}
+        </div>
+    </section>
 
+    <footer class="source-note">
+        <span>数据来源：BacDive</span>
+        <span>本地文件：{{ record.source_file or '-' }}</span>
+        <span>记录更新：{{ record.updated_at.strftime('%Y-%m-%d') if record.updated_at else '-' }}</span>
+    </footer>
+</main>
 <script>
-document.addEventListener("DOMContentLoaded", () => {
-    const selector = document.getElementById("medium-selector");
-    const mainImage = document.getElementById("medium-main-image");
-    const mediumCards = Array.from(document.querySelectorAll("#medium-detail .medium-card"));
-    const previewableImages = Array.from(document.querySelectorAll(".previewable-image"));
-    const lightbox = document.getElementById("image-lightbox");
-    const lightboxImage = document.getElementById("lightbox-image");
-    const lightboxClose = document.getElementById("lightbox-close");
-
-    function showMediumCard(mediumId) {
-        mediumCards.forEach(card => {
-            card.style.display = card.dataset.mediumId === mediumId ? "block" : "none";
+document.querySelectorAll('.copy-sequence').forEach(function (button) {
+    button.addEventListener('click', function () {
+        var sequence = document.getElementById(button.dataset.sequenceId).textContent.trim();
+        navigator.clipboard.writeText(sequence).then(function () {
+            button.textContent = '已复制';
+            window.setTimeout(function () { button.textContent = '复制序列'; }, 1600);
         });
-    }
-
-    function openLightbox(src, altText) {
-        lightboxImage.src = src;
-        lightboxImage.alt = altText || "图片预览";
-        lightbox.classList.add("is-open");
-        lightbox.setAttribute("aria-hidden", "false");
-    }
-
-    function closeLightbox() {
-        lightbox.classList.remove("is-open");
-        lightbox.setAttribute("aria-hidden", "true");
-        lightboxImage.src = "";
-    }
-
-    previewableImages.forEach(image => {
-        image.addEventListener("click", () => {
-            if (image.src) {
-                openLightbox(image.src, image.alt);
-            }
-        });
-    });
-
-    lightbox.addEventListener("click", event => {
-        if (event.target === lightbox) {
-            closeLightbox();
-        }
-    });
-
-    lightboxClose.addEventListener("click", closeLightbox);
-
-    document.addEventListener("keydown", event => {
-        if (event.key === "Escape" && lightbox.classList.contains("is-open")) {
-            closeLightbox();
-        }
-    });
-
-    if (!selector) {
-        return;
-    }
-
-    selector.addEventListener("change", event => {
-        const option = event.target.selectedOptions[0];
-        const image = option.dataset.image;
-        if (image) {
-            mainImage.src = image;
-        }
-        showMediumCard(option.value);
     });
 });
 </script>

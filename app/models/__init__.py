@@ -12,3 +12,5 @@ from .strain import (
     StrainSource,
 )
 from .maldi_reference import MaldiReference
+from .bacdive import BacdiveRecord, BacdiveStrainMatch
+from .silva import SilvaSsuSequence

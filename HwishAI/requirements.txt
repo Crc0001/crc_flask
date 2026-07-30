@@ -1,0 +1,6 @@
+torch>=2.0
+open_clip>=3.0
+xgboost>=2.0
+scikit-learn>=1.0
+Pillow>=10.0
+numpy>=1.24

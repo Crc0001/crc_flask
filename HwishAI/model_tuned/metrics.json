@@ -1,0 +1,7 @@
+{
+  "n_samples": 7325,
+  "n_species": 46,
+  "train_accuracy": 99.98,
+  "val_accuracy": 84.9,
+  "overfit_gap": 15.09
+}

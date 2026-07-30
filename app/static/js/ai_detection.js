@@ -2,6 +2,7 @@ let latestDetectionSummary = '';
 let latestSelectedStrainName = '';
 let latestOrbCandidates = [];
 let latestMaldiFile = null;
+let latestDetectionImageUrl = '';
 
 document.addEventListener('DOMContentLoaded', function() {
     // 初始化三级下拉框
@@ -574,7 +575,7 @@ function initDetectionButtons() {
             return;
         }
 
-        resultBox.innerHTML = '<div style="text-align:center; padding:30px;">🔍 ORB智能检测中...</div>';
+        resultBox.innerHTML = '<div style="text-align:center; padding:30px;">培养皿预处理、YOLO框选与 HwishAI 识别中...</div>';
         setButtonState(detectBtn, true, '检测中...');
 
         const formData = new FormData();
@@ -590,19 +591,22 @@ function initDetectionButtons() {
                     throw new Error(data.message || '智能检测失败');
                 }
 
+                const detections = Array.isArray(data.detections) ? data.detections : [];
                 const candidates = Array.isArray(data.candidates) ? data.candidates : [];
                 if (candidates.length === 0) {
-                    throw new Error('未返回候选菌种');
+                    throw new Error('HwishAI 未返回候选菌种');
                 }
 
                 latestOrbCandidates = candidates;
-                latestDetectionSummary = data.analysis_text || '已完成 ORB 智能检测。';
-                latestSelectedStrainName = data.recommended_strain_name || candidates[0].strain_name || '';
+                latestDetectionSummary = data.analysis_text || '培养皿预处理、YOLO框选与 HwishAI 识别已完成。';
+                latestSelectedStrainName = data.recommended_strain_name || candidates[0].matched_strain_name || '';
+                latestDetectionImageUrl = data.result_image_url || '';
 
-                resultBox.innerHTML = renderOrbCandidates(candidates, latestSelectedStrainName);
+                resultBox.innerHTML = renderOrbCandidates(candidates, latestSelectedStrainName, detections.length, data.plate_crop, data.image_selection);
+                updateDetectedPreview(latestDetectionImageUrl, data.image_selection);
                 bindCandidateSelection();
 
-                showSuccess('智能检测完成，请选择可信菌种');
+                showSuccess('处理完成，请查看 HwishAI 候选菌种');
             })
             .catch(error => {
                 const msg = error.message || '智能检测失败';
@@ -611,6 +615,8 @@ function initDetectionButtons() {
                 latestOrbCandidates = [];
                 latestDetectionSummary = '';
                 latestSelectedStrainName = '';
+                latestDetectionImageUrl = '';
+                updateDetectedPreview('');
             })
             .finally(() => {
                 setButtonState(detectBtn, false, '检测');
@@ -618,33 +624,53 @@ function initDetectionButtons() {
     });
 }
 
-function renderOrbCandidates(candidates, selectedName) {
-    const rows = candidates.map((item, idx) => {
-        const strainName = item.strain_name || `候选${idx + 1}`;
+function renderOrbCandidates(candidates, selectedName, detectedCount, plateCrop, imageSelection) {
+    const rows = (candidates || []).slice(0, 3).map((item, idx) => {
+        const strainName = item.matched_strain_name || item.strain_name || `菌落${idx + 1}`;
         const checked = strainName === selectedName ? 'checked' : '';
-        const score = Number(item.score || 0) * 100;
-        const orbScore = Number(item.orb_score || 0) * 100;
-        const colorScore = Number(item.color_score || 0) * 100;
+        const score = Number(item.classifier_confidence || item.match_score || item.score || 0) * 100;
+
+
+        const lowConfidence = score < 50;
 
         return `
-            <label class="orb-candidate-item ${checked ? 'selected' : ''}" data-strain-name="${escapeHtml(strainName)}">
+            <label class="orb-candidate-item ${checked ? 'selected' : ''} ${lowConfidence ? 'low-confidence' : 'high-confidence'}" data-strain-name="${escapeHtml(strainName)}">
                 <div class="orb-candidate-main">
                     <input type="radio" name="orb-candidate" value="${escapeHtml(strainName)}" ${checked}>
                     <div class="orb-candidate-text">
                         <div class="orb-candidate-name">${escapeHtml(strainName)}</div>
-                        <div class="orb-candidate-sub">综合分 ${score.toFixed(2)}%</div>
+                        <div class="orb-candidate-sub">${escapeHtml(item.classifier_species_name || '')} · HwishAI ${score.toFixed(2)}%${lowConfidence ? ' <span class="match-low-tag">低于50%</span>' : ''}</div>
                     </div>
                 </div>
-                <div class="orb-candidate-metrics">ORB ${orbScore.toFixed(2)}% / 颜色 ${colorScore.toFixed(2)}%</div>
+                <div class="orb-candidate-metrics">${escapeHtml(item.recognition_model || 'HwishAI 46类增强版')}</div>
             </label>
         `;
     }).join('');
 
+    if (!rows) {
+        return `
+            <div class="orb-result-wrap">
+                <div class="orb-result-title">HwishAI 候选菌种</div>
+                <div class="orb-result-note">没有可展示的候选结果</div>
+            </div>
+        `;
+    }
+
+    const cropNote = plateCrop && plateCrop.applied
+        ? ' · 培养皿已裁剪' + (plateCrop.needs_review ? '（建议复核裁剪范围）' : '')
+        : '';
+
+    const yoloNote = Number(detectedCount || 0) > 0
+        ? `YOLO 已框选 ${Number(detectedCount)} 个菌落${cropNote} · `
+        : '';
+    const sliceNote = imageSelection && imageSelection.applied
+        ? `大图已切片，随机抽检 ${Number(imageSelection.sampled_tiles || 0)} 张并返回最高置信度切片 · `
+        : '';
     return `
         <div class="orb-result-wrap">
-            <div class="orb-result-title">候选菌种（Top ${candidates.length}）</div>
+            <div class="orb-result-title">HwishAI 候选菌种（Top ${Math.min((candidates || []).length, 3)}）</div>
             <div class="orb-candidate-list">${rows}</div>
-            <div class="orb-result-note">当前选择：<strong>${escapeHtml(selectedName || '')}</strong></div>
+            <div class="orb-result-note">${sliceNote}${yoloNote}当前选择：<strong>${escapeHtml(selectedName || '')}</strong></div>
         </div>
     `;
 }
@@ -733,8 +759,8 @@ function initReportActions() {
                 <input class="report-edit-input" id="report-field-strain-name" type="text" value="${latestSelectedStrainName}" placeholder="请输入菌种名称">
             </div>
             <div class="report-item report-item-full">
-                <div class="report-item-label">智能检测结论（可编辑）</div>
-                <textarea class="report-edit-textarea" id="report-field-llm-result" placeholder="请输入或修改分析结论">${latestDetectionSummary || ''}</textarea>
+                <div class="report-item-label">培养皿预处理、YOLO框选与HwishAI识别结论（可编辑）</div>
+                <textarea class="report-edit-textarea" id="report-field-yolo-result" placeholder="请输入或修改分析结论">${latestDetectionSummary || ''}</textarea>
             </div>
             <div class="report-item">
                 <div class="report-item-label">样本图片</div>
@@ -779,13 +805,13 @@ function initReportActions() {
             const collectDateInput = document.getElementById('report-field-collect-date');
             const sourceLocationInput = document.getElementById('report-field-source-location');
             const strainNameInput = document.getElementById('report-field-strain-name');
-            const llmResultInput = document.getElementById('report-field-llm-result');
+            const yoloResultInput = document.getElementById('report-field-yolo-result');
 
             const editedSampleCode = (sampleCodeInput && sampleCodeInput.value.trim()) || '';
             const editedCollectDate = (collectDateInput && collectDateInput.value) || '';
             const editedSourceLocation = (sourceLocationInput && sourceLocationInput.value.trim()) || '';
             const editedStrainName = (strainNameInput && strainNameInput.value.trim()) || '';
-            const editedLlmResult = (llmResultInput && llmResultInput.value.trim()) || '';
+            const editedYoloResult = (yoloResultInput && yoloResultInput.value.trim()) || '';
 
             if (!editedStrainName) {
                 showError('请填写菌种名称');
@@ -797,7 +823,7 @@ function initReportActions() {
             formData.append('collect_date', editedCollectDate);
             formData.append('source_location', editedSourceLocation);
             formData.append('strain_name', editedStrainName);
-            formData.append('llm_result', editedLlmResult);
+            formData.append('detection_result', editedYoloResult);
             formData.append('image', imageFile);
 
             const maldiFile = (maldiInput && maldiInput.files && maldiInput.files[0]) || latestMaldiFile;
@@ -817,7 +843,7 @@ function initReportActions() {
                     }
                     showSuccess('报告已录入菌种数据库');
                     latestSelectedStrainName = editedStrainName;
-                    latestDetectionSummary = editedLlmResult;
+                    latestDetectionSummary = editedYoloResult;
                     modal.style.display = 'none';
                 })
                 .catch(error => {
@@ -844,7 +870,7 @@ function initReportActions() {
             const collectDateInput = document.getElementById('report-field-collect-date');
             const sourceLocationInput = document.getElementById('report-field-source-location');
             const strainNameInput = document.getElementById('report-field-strain-name');
-            const llmResultInput = document.getElementById('report-field-llm-result');
+            const yoloResultInput = document.getElementById('report-field-yolo-result');
 
             const editedSampleCode = (sampleCodeInput && sampleCodeInput.value.trim()) || '';
             const editedCollectDate = (collectDateInput && collectDateInput.value) || '';
@@ -857,7 +883,7 @@ function initReportActions() {
             formData.append('collect_date', editedCollectDate);
             formData.append('source_location', editedSourceLocation);
             formData.append('strain_name', editedStrainName);
-            formData.append('llm_result', editedLlmResult);
+            formData.append('detection_result', (yoloResultInput && yoloResultInput.value.trim()) || '');
             formData.append('image', imageFile);
 
             const maldiFile = (maldiInput && maldiInput.files && maldiInput.files[0]) || latestMaldiFile;
@@ -1070,10 +1096,48 @@ function previewSelectedImage(file) {
 
     const imageUrl = URL.createObjectURL(file);
     imageContent.innerHTML = `
-        <div class="image-container">
-            <img src="${imageUrl}" alt="样本图片" id="sample-image">
+        <div class="preview-grid" id="preview-grid">
+            <div class="preview-panel">
+                <div class="preview-label">原始图片</div>
+                <div class="image-container">
+                    <img src="${imageUrl}" alt="样本图片" id="sample-image">
+                </div>
+            </div>
+            <div class="preview-panel">
+                <div class="preview-label preview-label-row"><span>检测后图片</span><span class="selected-image-confidence" id="selected-image-confidence"></span></div>
+                <div class="image-container image-container-secondary">
+                    <div class="preview-placeholder" id="detected-image-placeholder">检测后图片将在这里显示</div>
+                    <img src="" alt="检测后图片" id="detected-image" style="display: none;">
+                </div>
+            </div>
         </div>
     `;
+
+    latestDetectionImageUrl = '';
+    updateDetectedPreview('');
+}
+
+function updateDetectedPreview(imageUrl, imageSelection) {
+    const detectedImage = document.getElementById('detected-image');
+    const placeholder = document.getElementById('detected-image-placeholder');
+    const confidence = document.getElementById('selected-image-confidence');
+
+    if (!detectedImage || !placeholder) return;
+
+    if (imageUrl) {
+        detectedImage.src = `${imageUrl}?t=${Date.now()}`;
+        detectedImage.style.display = 'block';
+        placeholder.style.display = 'none';
+        if (confidence) {
+            const score = Number(imageSelection && imageSelection.confidence);
+            confidence.textContent = Number.isFinite(score) ? `置信度 ${(score * 100).toFixed(2)}%` : '';
+        }
+    } else {
+        detectedImage.removeAttribute('src');
+        detectedImage.style.display = 'none';
+        placeholder.style.display = 'flex';
+        if (confidence) confidence.textContent = '';
+    }
 }
 
 function showWelcomeMessage() {

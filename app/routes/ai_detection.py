@@ -1,12 +1,12 @@
 import os
 import json
-import re
-import base64
+import random
+import shutil
+import uuid
 from io import BytesIO
 from datetime import datetime
 from flask import Blueprint, render_template, request, current_app, url_for, jsonify
 from werkzeug.utils import secure_filename
-import requests
 import cv2
 import numpy as np
 
@@ -20,6 +20,13 @@ from app.models.sample_lite import SampleLite
 from app.models.sample import Sample
 from app.models import Strain
 from app.extensions import db
+from app.services.yolo_service import (
+    HWISHAI_CLASSIFIER_MODEL,
+    classify_images,
+    detect_and_draw,
+)
+from crop_plate_batch import crop_plate
+from image_slicer import slice_images
 import pandas as pd
 from flask import send_file
 
@@ -28,66 +35,24 @@ ai_detection_bp = Blueprint("ai_detection", __name__)
 UPLOAD_DIR = "static/uploads"
 RESULT_DIR = "static/results"
 MALDI_UPLOAD_DIR = "static/maldi_uploads"
-
-# Qwen3-VL 配置（按你的要求直接写在代码中）
-QWEN3_VL_API_KEY = "sk-c551a527d0664d59a65ffe5deccec880"
-QWEN3_VL_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-QWEN3_VL_MODEL = "qwen3-vl-plus"
-QWEN3_VL_PROMPT = """你是经验丰富的微生物实验室分析助手。请基于上传的菌落/显微图像与用户文本描述进行综合判断，并输出结构化结论。
-
-请严格按以下格式输出（必须包含第一行）：
-菌种名称：<必须给出一个菌种名称，若不确定则给“最可能菌种”>
-结论摘要：...
-关键视觉依据：...
-混淆菌种区分点：...
-风险等级：低/中/高（并说明原因）
-下一步实验建议：...
-不确定性来源：...
-
-要求：
-- 用中文
-- 菌种名称必须明确给出，不能留空
-- 若信息不足，也必须给出一个“最可能菌种”作为候选并标注不确定性
-"""
+ENABLE_PLATE_CROP = False  # 暂时停用，保留裁剪实现供后续恢复
+SLICE_TRIGGER_SIZE = 1280
+SLICE_SIZE = 448
+SLICE_SAMPLE_COUNT = 20
 
 
-def _extract_strain_name(text):
-    if not text:
-        return ""
-
-    pattern = re.compile(r"菌种名称\s*[：:]\s*(.+)")
-    for line in text.splitlines():
-        match = pattern.search(line.strip())
-        if match:
-            return match.group(1).strip()
-
-    # 兜底：若模型未严格按格式输出，则取第一行非空文本
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            return line[:255]
-
-    return ""
-
-
-def _normalize_image_path(path):
-    if not path:
-        return ""
-    p = str(path).strip().replace("\\", "/")
-    if p.startswith("/"):
-        p = p[1:]
-    if p.startswith("static/"):
-        p = p[len("static/"):]
-    return p
-
-
-def _strain_image_candidates(strain):
-    candidates = []
-    for field in [strain.main_image, strain.fingerprint_image, strain.gram_stain_image]:
-        normalized = _normalize_image_path(field)
-        if normalized:
-            candidates.append(normalized)
-    return candidates
+def _strain_match_candidates():
+    strains = Strain.query.filter(Strain.is_active.is_(True)).all()
+    return [
+        {
+            "strain_id": strain.id,
+            "strain_name": strain.name or strain.scientific_name or f"菌种#{strain.id}",
+            "scientific_name": strain.scientific_name or "",
+            "alias": strain.alias or "",
+            "category": strain.category or "",
+        }
+        for strain in strains
+    ]
 
 
 def _read_image_bgr(image_bytes):
@@ -116,6 +81,75 @@ def _center_crop(img_bgr, crop_ratio=0.8):
     y1 = (h - ch) // 2
     x1 = (w - cw) // 2
     return img_bgr[y1:y1 + ch, x1:x1 + cw]
+
+
+def _select_detection_image(image, image_path, upload_dir):
+    height, width = image.shape[:2]
+    selection = {
+        "applied": False,
+        "original_size": [int(width), int(height)],
+        "tile_size": None,
+        "total_tiles": 0,
+        "sampled_tiles": 1,
+        "selected_tile": None,
+        "confidence": None,
+    }
+    if width <= SLICE_TRIGGER_SIZE and height <= SLICE_TRIGGER_SIZE:
+        return image, image_path, None, selection
+
+    slice_root = os.path.join(upload_dir, "detection_slices", uuid.uuid4().hex)
+    source_dir = os.path.join(slice_root, "source")
+    tile_dir = os.path.join(slice_root, "tiles")
+    os.makedirs(source_dir, exist_ok=True)
+    source_ext = os.path.splitext(image_path)[1] or ".jpg"
+    source_path = os.path.join(source_dir, f"source_{uuid.uuid4().hex}{source_ext}")
+    shutil.copy2(image_path, source_path)
+
+    slice_images(
+        source_dir,
+        output_dir=tile_dir,
+        slice_size=SLICE_SIZE,
+        overlap_ratio=0.2,
+        recursive=False,
+        min_std=0,
+        min_edges=0,
+    )
+    tile_paths = sorted(
+        os.path.join(tile_dir, name)
+        for name in os.listdir(tile_dir)
+        if name.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"))
+    )
+    if not tile_paths:
+        raise ValueError("大图切片后没有生成可检测图片")
+
+    sampled_paths = random.sample(tile_paths, min(SLICE_SAMPLE_COUNT, len(tile_paths)))
+    sampled_images = []
+    readable_paths = []
+    for tile_path in sampled_paths:
+        tile = _read_image_bgr_from_path(tile_path)
+        if tile is not None:
+            sampled_images.append(tile)
+            readable_paths.append(tile_path)
+    if not sampled_images:
+        raise ValueError("随机抽取的切片均无法读取")
+
+    classifications = classify_images(sampled_images)
+    best_index = max(
+        range(len(classifications)),
+        key=lambda index: float(classifications[index].get("confidence", 0.0)),
+    )
+    best_path = readable_paths[best_index]
+    best_classification = classifications[best_index]
+    selection.update({
+        "applied": True,
+        "tile_size": [SLICE_SIZE, SLICE_SIZE],
+        "total_tiles": len(tile_paths),
+        "sampled_tiles": len(sampled_images),
+        "selected_tile": os.path.basename(best_path),
+        "confidence": round(float(best_classification.get("confidence", 0.0)), 6),
+        "_work_dir": slice_root,
+    })
+    return sampled_images[best_index], best_path, best_classification, selection
 
 
 def _preprocess_for_match(img_bgr, size=256, crop_ratio=0.8):
@@ -209,81 +243,160 @@ def orb_detect():
         if not image_bytes:
             return jsonify({"success": False, "message": "图片内容为空"})
 
+        upload_dir = os.path.join(current_app.root_path, UPLOAD_DIR)
+        result_dir = os.path.join(current_app.root_path, RESULT_DIR)
+        os.makedirs(upload_dir, exist_ok=True)
+        os.makedirs(result_dir, exist_ok=True)
+
+        stem, original_ext = os.path.splitext(filename)
+        filename = f"{stem or 'upload'}_{uuid.uuid4().hex[:12]}{original_ext or '.jpg'}"
+        image_path = os.path.join(upload_dir, filename)
+        with open(image_path, "wb") as f:
+            f.write(image_bytes)
+
         q_raw = _read_image_bgr(image_bytes)
         if q_raw is None:
             return jsonify({"success": False, "message": "图片读取失败，请更换图片重试"})
 
-        q_img = _preprocess_for_match(q_raw, size=256, crop_ratio=0.8)
+        plate_crop = {
+            "detected": False,
+            "applied": False,
+            "confidence": None,
+            "method": None,
+            "needs_review": False,
+            "review_reasons": [],
+        }
+        detection_image = q_raw
+        if ENABLE_PLATE_CROP:
+            try:
+                detection_image, crop_detection = crop_plate(q_raw)
+                plate_crop.update({
+                    "detected": True,
+                    "applied": True,
+                    "confidence": round(float(crop_detection.confidence), 6),
+                    "method": crop_detection.method,
+                    "needs_review": crop_detection.needs_review,
+                    "review_reasons": list(crop_detection.review_reasons),
+                    "bbox": [
+                        crop_detection.x1,
+                        crop_detection.y1,
+                        crop_detection.x2,
+                        crop_detection.y2,
+                    ],
+                    "output_size": [
+                        int(detection_image.shape[1]),
+                        int(detection_image.shape[0]),
+                    ],
+                })
+            except (ValueError, cv2.error) as exc:
+                plate_crop["reason"] = str(exc)
 
-        w_orb = 0.2
-        w_color = 0.8
+        detection_image, detection_image_path, selected_classification, image_selection = (
+            _select_detection_image(detection_image, image_path, upload_dir)
+        )
+        strain_candidates = _strain_match_candidates()
 
-        strains = Strain.query.filter(Strain.is_active.is_(True)).all()
-        if not strains:
-            return jsonify({"success": False, "message": "菌种库为空，无法执行匹配"})
+        try:
+            detection_result = detect_and_draw(
+                image_path=detection_image_path,
+                save_dir=result_dir,
+                confidence_threshold=0.5,
+                strain_candidates=strain_candidates,
+                image_bgr=detection_image,
+                image_classification=selected_classification,
+            )
+        finally:
+            slice_work_dir = image_selection.pop("_work_dir", None)
+            if slice_work_dir:
+                shutil.rmtree(slice_work_dir, ignore_errors=True)
 
-        results = []
-        static_root = os.path.join(current_app.root_path, "static")
+        detections = detection_result.get("detections") or []
+        if not detection_result.get("success"):
+            return jsonify({"success": False, "message": detection_result.get("error") or "菌落检测识别失败"})
 
-        for strain in strains:
-            image_rel_path = ""
-            image_abs_path = ""
-            for candidate_rel in _strain_image_candidates(strain):
-                candidate_abs = os.path.join(static_root, candidate_rel)
-                if os.path.exists(candidate_abs):
-                    image_rel_path = candidate_rel
-                    image_abs_path = candidate_abs
-                    break
+        classification = detection_result.get("classification") or {}
+        if image_selection.get("confidence") is None:
+            image_selection["confidence"] = round(
+                float(classification.get("confidence", 0.0)),
+                6,
+            )
+        if not classification.get("top3"):
+            return jsonify({"success": False, "message": "HwishAI未返回菌种候选"})
 
-            if not image_abs_path:
-                continue
-
-            db_raw = _read_image_bgr_from_path(image_abs_path)
-            if db_raw is None:
-                continue
-
-            db_img = _preprocess_for_match(db_raw, size=256, crop_ratio=0.8)
-            s_orb = _orb_similarity(q_img, db_img)
-            s_color = _color_hist_similarity(q_img, db_img)
-            s_final = w_orb * s_orb + w_color * s_color
-
-            results.append({
-                "strain_id": strain.id,
-                "strain_name": (strain.name or strain.scientific_name or f"菌种#{strain.id}"),
-                "score": round(float(s_final), 4),
-                "orb_score": round(float(s_orb), 4),
-                "color_score": round(float(s_color), 4),
-                "image_path": image_rel_path
+        strain_by_scientific_name = {
+            " ".join(candidate.get("scientific_name", "").split()).casefold(): candidate
+            for candidate in strain_candidates
+            if candidate.get("scientific_name")
+        }
+        classifier_aliases = {
+            "Faucicola osloensis": "Moraxella osloensis",
+            "Staphylococcus ureilyticu": "Staphylococcus ureilyticus",
+        }
+        top_candidates = []
+        for rank, item in enumerate(classification["top3"], start=1):
+            scientific_name = item.get("species_name", "")
+            lookup_name = classifier_aliases.get(scientific_name, scientific_name)
+            strain = strain_by_scientific_name.get(
+                " ".join(lookup_name.split()).casefold()
+            )
+            classifier_confidence = float(item.get("confidence", 0.0))
+            classifier_chinese_name = item.get("chinese_name", "")
+            top_candidates.append({
+                "rank": rank,
+                "matched_strain_id": strain.get("strain_id") if strain else None,
+                "matched_strain_name": (
+                    strain.get("strain_name")
+                    if strain
+                    else classifier_chinese_name or scientific_name
+                ),
+                "classifier_species_name": scientific_name,
+                "classifier_chinese_name": classifier_chinese_name,
+                "classifier_confidence": classifier_confidence,
+                "match_score": classifier_confidence,
+                "image_score": classifier_confidence,
+                "low_confidence": classifier_confidence < 0.5,
+                "recognition_model": f"HwishAI {HWISHAI_CLASSIFIER_MODEL}",
             })
 
-        if not results:
-            return jsonify({"success": False, "message": "知识库中没有可用菌种图片，无法匹配"})
-
-        results.sort(key=lambda x: x["score"], reverse=True)
-        qualified_candidates = [item for item in results if item["score"] >= 0.5]
-        top_candidates = qualified_candidates[:3]
         if not top_candidates:
-            return jsonify({"success": False, "message": "知识库中无相近候选菌。"})
-
-        top1 = top_candidates[0]
-
-        analysis_text = f"已完成 ORB+颜色融合匹配，共返回{len(top_candidates)}个候选。当前建议菌种：{top1['strain_name']}（{top1['score'] * 100:.2f}%）。"
+            top_candidates = [detections[0]]
+        top_detection = top_candidates[0]
+        yolo_summary = f"YOLO已框选{len(detections)}个菌落，" if detections else ""
+        selection_summary = (
+            f"大图随机抽检{image_selection['sampled_tiles']}张切片并选取最高置信度切片，"
+            if image_selection["applied"]
+            else ""
+        )
+        analysis_text = (
+            f"{selection_summary}"
+            f"{yolo_summary}HwishAI已完成菌种识别。"
+            f"当前最佳菌种：{top_detection.get('matched_strain_name', '未知菌种')}（{top_detection.get('match_score', 0.0) * 100:.2f}%）。"
+        )
 
         return jsonify({
             "success": True,
-            "message": "智能检测完成",
+            "message": "YOLO框选与HwishAI识别完成",
             "candidates": top_candidates,
-            "recommended_strain_name": top1["strain_name"],
-            "analysis_text": analysis_text
+            "detections": detections,
+            "result_path": detection_result.get("result_path"),
+            "result_image_url": url_for(
+                "static",
+                filename=f"results/{os.path.basename(detection_image_path)}",
+            ),
+            "recommended_strain_name": top_detection.get("matched_strain_name", ""),
+            "recommended_match_score": top_detection.get("match_score", 0.0),
+            "analysis_text": analysis_text,
+            "plate_crop": plate_crop,
+            "image_selection": image_selection,
         })
     except Exception as e:
-        print(f"ORB智能检测失败: {str(e)}")
-        return jsonify({"success": False, "message": f"智能检测失败: {str(e)}"})
+        print(f"菌落检测识别失败: {str(e)}")
+        return jsonify({"success": False, "message": f"菌落检测识别失败: {str(e)}"})
 
 
 @ai_detection_bp.route("/ai_detection", methods=["GET"])
 def ai_detection():
-    # 仅渲染页面，不再执行YOLO检测与数据库写入
+    # GET仅渲染页面，检测由上传接口按需执行
     location_hierarchy = SampleLite.get_hierarchical_data()
     return render_template(
         "ai_detection.html",
@@ -296,148 +409,6 @@ def ai_detection():
         maldi_image_url=None,
         location_hierarchy=json.dumps(location_hierarchy)
     )
-
-
-@ai_detection_bp.route("/api/llm_detect", methods=["POST"])
-def llm_detect():
-    """调用Qwen3-VL进行图文联合分析"""
-    try:
-        if QWEN3_VL_API_KEY == "YOUR_QWEN3_VL_API_KEY":
-            return jsonify({
-                "success": False,
-                "message": "请先在后端配置Qwen3-VL API Key"
-            })
-
-        file = request.files.get("image")
-        prompt_text = (request.form.get("prompt_text") or "").strip()
-
-        if not file or file.filename == "":
-            return jsonify({
-                "success": False,
-                "message": "请上传图片文件"
-            })
-
-        if not prompt_text:
-            return jsonify({
-                "success": False,
-                "message": "请输入描述信息"
-            })
-
-        filename = secure_filename(file.filename)
-        ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
-        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'webp', 'jfif', 'heic', 'heif'}
-
-        # 兼容更多图片来源：优先看 MIME 类型，其次看扩展名
-        mime_type = (file.mimetype or '').lower()
-        is_image_mime = mime_type.startswith('image/')
-        is_allowed_ext = ext in allowed_extensions
-
-        if not is_image_mime and not is_allowed_ext:
-            return jsonify({
-                "success": False,
-                "message": "不支持的文件格式，请上传图片文件（png/jpg/jpeg/gif/bmp/tiff/webp/jfif/heic/heif）"
-            })
-
-        image_bytes = file.read()
-        if not image_bytes:
-            return jsonify({
-                "success": False,
-                "message": "图片内容为空"
-            })
-
-        mime_type = file.mimetype or "image/jpeg"
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-        image_data_url = f"data:{mime_type};base64,{image_base64}"
-
-        payload = {
-            "model": QWEN3_VL_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": QWEN3_VL_PROMPT
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt_text
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": image_data_url
-                            }
-                        }
-                    ]
-                }
-            ],
-            "temperature": 0.2,
-            "max_tokens": 1200
-        }
-
-        headers = {
-            "Authorization": f"Bearer {QWEN3_VL_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        resp = requests.post(
-            QWEN3_VL_ENDPOINT,
-            headers=headers,
-            json=payload,
-            timeout=90
-        )
-
-        if resp.status_code != 200:
-            error_text = resp.text
-            return jsonify({
-                "success": False,
-                "message": f"Qwen3-VL调用失败（{resp.status_code}）",
-                "detail": error_text[:1000]
-            })
-
-        result_data = resp.json()
-        choices = result_data.get("choices") or []
-        if not choices:
-            return jsonify({
-                "success": False,
-                "message": "Qwen3-VL未返回有效结果"
-            })
-
-        message_content = (choices[0].get("message") or {}).get("content")
-
-        if isinstance(message_content, list):
-            text_parts = []
-            for item in message_content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text_parts.append(item.get("text", ""))
-            analysis_text = "\n".join([part for part in text_parts if part]).strip()
-        else:
-            analysis_text = str(message_content or "").strip()
-
-        if not analysis_text:
-            analysis_text = "模型已返回响应，但未提取到文本内容。"
-
-        strain_name = _extract_strain_name(analysis_text)
-
-        return jsonify({
-            "success": True,
-            "message": "大模型分析完成",
-            "result": analysis_text,
-            "strain_name": strain_name
-        })
-
-    except requests.RequestException as e:
-        return jsonify({
-            "success": False,
-            "message": f"请求Qwen3-VL失败: {str(e)}"
-        })
-    except Exception as e:
-        print(f"大模型分析失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "message": f"大模型分析失败: {str(e)}"
-        })
 
 
 @ai_detection_bp.route("/api/save_detection_report", methods=["POST"])
@@ -458,7 +429,7 @@ def save_detection_report():
         if not strain_name:
             return jsonify({
                 "success": False,
-                "message": "缺少菌种名称，请先完成大模型检测或手动填写"
+                "message": "缺少菌种名称，请先完成菌落识别或手动填写"
             })
 
         collect_date = None
@@ -593,8 +564,7 @@ def export_detection_report_pdf():
         collect_date = (request.form.get('collect_date') or '').strip()
         source_location = (request.form.get('source_location') or '').strip()
         strain_name = (request.form.get('strain_name') or '').strip()
-        llm_result = (request.form.get('llm_result') or '').strip()
-
+        detection_result = (request.form.get('detection_result') or '').strip()
         image_file = request.files.get('image')
         if not image_file or not image_file.filename:
             return jsonify({'success': False, 'message': '请先上传样本图片'}), 400
@@ -624,11 +594,11 @@ def export_detection_report_pdf():
         y -= 8
 
         pdf.setFont(font_name, 11)
-        pdf.drawString(40, y, '大模型分析结论：')
+        pdf.drawString(40, y, '检测结论：')
         y -= 18
 
-        llm_lines = (llm_result or '未填写').splitlines() or ['未填写']
-        for line in llm_lines:
+        conclusion_text = (detection_result or strain_name or '未填写').splitlines() or ['未填写']
+        for line in conclusion_text:
             y = _draw_wrapped_text(pdf, line, 40, y, page_width - 80, font_name, 10, line_height=15)
             if y < 260:
                 pdf.showPage()

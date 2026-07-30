@@ -1,50 +1,120 @@
 {% extends "layout.html" %}
-{% block title %}菌种展示{% endblock %}
+{% block title %}微生物知识库{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/strain_showcase.css') }}">
 {% endblock %}
 
 {% block content %}
-<div class="strain-showcase">
-    <div class="search-row">
-        <form method="get" class="search-form">
-            <input type="text" name="q" value="{{ query }}" placeholder="搜索菌属 / 菌种 / 拉丁名" />
-            <button type="submit">搜索</button>
-        </form>
+<main class="knowledge-page">
+    <header class="knowledge-header">
+        <div>
+            <p class="eyebrow">BacDive + 本地环境菌数据库</p>
+            <h1>微生物知识库</h1>
+            <p class="header-copy">以 BacDive 公开菌株数据为主体，本地环境菌资料用于补充图像、培养、16S 与采样来源。</p>
+        </div>
+        <div class="stat-strip" aria-label="知识库统计">
+            <div><strong>{{ "{:,}".format(stats.records) }}</strong><span>BacDive 记录</span></div>
+            <div><strong>{{ "{:,}".format(stats.type_strains) }}</strong><span>模式菌株</span></div>
+            <div><strong>{{ "{:,}".format(stats.environment_records) }}</strong><span>本地增强记录</span></div>
+        </div>
+    </header>
+
+    <form method="get" class="filter-bar">
+        <label class="search-field">
+            <span>综合检索</span>
+            <input type="search" name="q" value="{{ filters.q }}" placeholder="中文名、学名、DSM 编号、BacDive ID、关键词">
+        </label>
+        <label>
+            <span>域</span>
+            <select name="domain">
+                <option value="">全部</option>
+                <option value="Bacteria" {% if filters.domain == 'Bacteria' %}selected{% endif %}>Bacteria</option>
+                <option value="Archaea" {% if filters.domain == 'Archaea' %}selected{% endif %}>Archaea</option>
+            </select>
+        </label>
+        <label>
+            <span>模式菌株</span>
+            <select name="type_strain">
+                <option value="">全部</option>
+                <option value="yes" {% if filters.type_strain == 'yes' %}selected{% endif %}>是</option>
+                <option value="no" {% if filters.type_strain == 'no' %}selected{% endif %}>否</option>
+            </select>
+        </label>
+        <label>
+            <span>属</span>
+            <input type="text" name="genus" value="{{ filters.genus }}" placeholder="例如 Bacillus">
+        </label>
+        <label class="check-field">
+            <input type="checkbox" name="environment_only" value="1" {% if filters.environment_only %}checked{% endif %}>
+            <span>仅看本地增强</span>
+        </label>
+        <button type="submit" class="primary-action">检索</button>
+        <a class="reset-action" href="{{ url_for('strain_showcase.index') }}">重置</a>
+    </form>
+
+    <div class="result-heading">
+        <div>
+            <h2>菌株记录</h2>
+            <span>筛选结果 {{ "{:,}".format(pagination.total) }} 条</span>
+        </div>
+        <span>第 {{ pagination.page }} / {{ total_pages }} 页</span>
     </div>
 
-    <div class="grid">
-        {% for strain in strains %}
-        <a class="strain-card" href="{{ url_for('strain_showcase.detail', strain_id=strain.id) }}">
-            <div class="strain-card-image" style="background-image: url('{{ strain.main_image or url_for('static', filename='uploads/placeholder.png') }}');"></div>
-            <div class="strain-card-body">
-                <div class="strain-name">{{ strain.name }}</div>
-                <div class="strain-scientific">{{ strain.scientific_name }}</div>
+    <section class="record-grid" aria-label="菌株记录列表">
+        {% for record in records %}
+        {% set local = environment_by_record.get(record.id) %}
+        <article class="record-card">
+            <div class="record-card-top">
+                <span class="domain-badge">{{ record.domain_name or '未分类' }}</span>
+                <div class="record-flags">
+                    {% if (record.type_strain or '')|lower == 'yes' %}<span class="type-badge">模式菌株</span>{% endif %}
+                    {% if local %}<span class="local-badge">本地环境库</span>{% endif %}
+                </div>
             </div>
-        </a>
+            <div class="record-title">
+                <h3>{{ record.species_name or record.full_scientific_name or ('BacDive ' ~ record.bacdive_id) }}</h3>
+                {% if record.species_name_zh %}<p class="chinese-name">{{ record.species_name_zh }}</p>{% endif %}
+                {% if record.strain_designation %}<p>{{ record.strain_designation }}</p>{% endif %}
+            </div>
+            <dl class="record-meta">
+                <div><dt>BacDive ID</dt><dd>{{ record.bacdive_id }}</dd></div>
+                <div><dt>DSM</dt><dd>{{ record.dsm_number or '-' }}</dd></div>
+                <div><dt>分类</dt><dd>{{ record.family_name or '-' }} / {{ record.genus_name or '-' }}</dd></div>
+            </dl>
+            {% if record.description %}<p class="record-description">{{ record.description|truncate(150, True) }}</p>{% endif %}
+            {% if local %}
+            <div class="local-summary">
+                <span>{{ local.name }}</span>
+                <small>{{ local.category or '环境菌资料' }}</small>
+            </div>
+            {% endif %}
+            <a class="detail-link" href="{{ url_for('strain_showcase.detail', record_id=record.id) }}">查看完整资料 <span aria-hidden="true">→</span></a>
+        </article>
         {% endfor %}
-        {% if strains|length == 0 %}
-        <div class="empty-state">暂无匹配菌种</div>
+        {% if not records %}
+        <div class="empty-state">
+            <h3>没有匹配记录</h3>
+            <p>尝试缩短关键词或清除部分筛选条件。</p>
+        </div>
         {% endif %}
-    </div>
+    </section>
 
-    <div class="pagination">
+    {% if pagination.pages > 1 %}
+    <nav class="pagination" aria-label="分页">
+        {% set common = {'q': filters.q, 'domain': filters.domain, 'type_strain': filters.type_strain, 'genus': filters.genus, 'environment_only': '1' if filters.environment_only else ''} %}
         {% if pagination.has_prev %}
-        <a href="?q={{ query }}&page={{ pagination.prev_num }}">上一页</a>
+        <a href="{{ url_for('strain_showcase.index', page=pagination.prev_num, **common) }}">上一页</a>
         {% endif %}
-        {% if start_page > 1 %}
-        <span>...</span>
-        {% endif %}
+        {% if start_page > 1 %}<span>…</span>{% endif %}
         {% for p in page_range %}
-        <a href="?q={{ query }}&page={{ p }}" class="{% if pagination.page == p %}active{% endif %}">{{ p }}</a>
+        <a href="{{ url_for('strain_showcase.index', page=p, **common) }}" {% if pagination.page == p %}class="active" aria-current="page"{% endif %}>{{ p }}</a>
         {% endfor %}
-        {% if end_page < total_pages %}
-        <span>...</span>
-        {% endif %}
+        {% if end_page < total_pages %}<span>…</span>{% endif %}
         {% if pagination.has_next %}
-        <a href="?q={{ query }}&page={{ pagination.next_num }}">下一页</a>
+        <a href="{{ url_for('strain_showcase.index', page=pagination.next_num, **common) }}">下一页</a>
         {% endif %}
-    </div>
-</div>
+    </nav>
+    {% endif %}
+</main>
 {% endblock %}
