@@ -1,7 +1,5 @@
 import os
 import json
-import random
-import shutil
 import uuid
 from io import BytesIO
 from datetime import datetime
@@ -18,15 +16,14 @@ from reportlab.pdfgen import canvas
 
 from app.models.sample_lite import SampleLite
 from app.models.sample import Sample
-from app.models import Strain
+from app.models import BacdiveRecord, BacdiveStrainMatch, Strain
 from app.extensions import db
 from app.services.yolo_service import (
     HWISHAI_CLASSIFIER_MODEL,
     classify_images,
-    detect_and_draw,
+    fuse_predictions,
 )
 from crop_plate_batch import crop_plate
-from image_slicer import slice_images
 import pandas as pd
 from flask import send_file
 
@@ -35,17 +32,34 @@ ai_detection_bp = Blueprint("ai_detection", __name__)
 UPLOAD_DIR = "static/uploads"
 RESULT_DIR = "static/results"
 MALDI_UPLOAD_DIR = "static/maldi_uploads"
-ENABLE_PLATE_CROP = False  # 暂时停用，保留裁剪实现供后续恢复
-SLICE_TRIGGER_SIZE = 1280
+ENABLE_PLATE_CROP = True  # 仅对大图启用，并要求培养皿检测达到可信阈值
+SLICE_TRIGGER_SHORT_SIDE = 1200
+SLICE_TRIGGER_LONG_SIDE = 1600
 SLICE_SIZE = 448
-SLICE_SAMPLE_COUNT = 20
+SLICE_CANDIDATE_COUNT = 8  # 两阶段选块：仅对内容分最高的少量切片分类，再做概率加权聚合
+SLICE_MIN_STD = 8.0
+SLICE_MIN_EDGE_RATIO = 0.001
+SLICE_MIN_PLATE_COVERAGE = 0.985
+# 选块优先档：菌落数 <= 该值的切片计满分并优先作为展示块（菌少、可读性好）。
+# 改这里即可调整"优先取多少菌以内的图"；全皿没有此类块时自动退回最优块。
+SLICE_PREFERRED_MAX_COLONIES = 15
+TRAINING_VIEW_SIZE = 1200  # 分类器训练图短边；把原始皿还原到该尺度再分类，命中率大幅提升
 
 
 def _strain_match_candidates():
     strains = Strain.query.filter(Strain.is_active.is_(True)).all()
+    knowledge_records = dict(
+        db.session.query(
+            BacdiveStrainMatch.strain_id,
+            db.func.min(BacdiveStrainMatch.bacdive_record_id),
+        )
+        .group_by(BacdiveStrainMatch.strain_id)
+        .all()
+    )
     return [
         {
             "strain_id": strain.id,
+            "knowledge_record_id": knowledge_records.get(strain.id),
             "strain_name": strain.name or strain.scientific_name or f"菌种#{strain.id}",
             "scientific_name": strain.scientific_name or "",
             "alias": strain.alias or "",
@@ -61,15 +75,6 @@ def _read_image_bgr(image_bytes):
     return img
 
 
-def _read_image_bgr_from_path(image_path):
-    try:
-        arr = np.fromfile(image_path, dtype=np.uint8)
-        if arr.size == 0:
-            return None
-        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    except Exception:
-        return None
-
 
 def _center_crop(img_bgr, crop_ratio=0.8):
     crop_ratio = float(np.clip(crop_ratio, 0.3, 1.0))
@@ -83,7 +88,195 @@ def _center_crop(img_bgr, crop_ratio=0.8):
     return img_bgr[y1:y1 + ch, x1:x1 + cw]
 
 
-def _select_detection_image(image, image_path, upload_dir):
+def _resize_short(img_bgr, size):
+    """短边缩放到指定尺寸，保持宽高比。"""
+    h, w = img_bgr.shape[:2]
+    scale = float(size) / float(min(h, w))
+    return cv2.resize(
+        img_bgr,
+        (int(round(w * scale)), int(round(h * scale))),
+        interpolation=cv2.INTER_AREA,
+    )
+
+
+def _training_view(img_bgr):
+    """还原分类器训练域视图：中心 75% 方窗 + 短边缩放到训练尺寸。
+
+    训练图是 1600x1200 裁剪皿；BioCLIP 压到 224 后模型实际看到的是
+    中心 1200x1200 窗口。原始皿直接分类时菌落尺度与训练域偏差 2~3 倍，
+    是原始皿识别率低的主因。实测（uploads 132 张）：6% -> 33% Top1。
+    """
+    h, w = img_bgr.shape[:2]
+    q = int(min(h, w) * 0.75)
+    x1 = (w - q) // 2
+    y1 = (h - q) // 2
+    return _resize_short(img_bgr[y1:y1 + q, x1:x1 + q], TRAINING_VIEW_SIZE)
+
+
+def _tile_positions(length, tile_size, stride):
+    if length <= tile_size:
+        return [0]
+    positions = list(range(0, length - tile_size + 1, stride))
+    last_position = length - tile_size
+    if positions[-1] != last_position:
+        positions.append(last_position)
+    return positions
+
+
+def _should_slice_image(width, height):
+    short_side, long_side = sorted((int(width), int(height)))
+    return (
+        short_side > SLICE_TRIGGER_SHORT_SIDE
+        and long_side > SLICE_TRIGGER_LONG_SIDE
+    )
+
+
+def _plate_coverage_mask(x, y, tile_size, plate_geometry):
+    if not plate_geometry:
+        return None, 1.0
+    yy, xx = np.ogrid[y:y + tile_size, x:x + tile_size]
+    radius = float(plate_geometry["radius"]) * 0.94
+    mask = (
+        (xx - float(plate_geometry["cx"])) ** 2
+        + (yy - float(plate_geometry["cy"])) ** 2
+        <= radius ** 2
+    )
+    return mask, float(mask.mean())
+
+
+def _tile_content_score(tile, plate_mask=None):
+    gray = cv2.cvtColor(tile, cv2.COLOR_BGR2GRAY)
+    gray_std = float(gray.std())
+    edges = cv2.Canny(gray, 50, 150)
+    edge_ratio = float((edges > 0).mean())
+    if gray_std < SLICE_MIN_STD or edge_ratio < SLICE_MIN_EDGE_RATIO:
+        return None
+
+    top_hat_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (31, 31),
+    )
+    top_hat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, top_hat_kernel)
+    bright_detail = top_hat > 10
+    if plate_mask is not None:
+        bright_detail &= plate_mask
+    bright_detail = cv2.morphologyEx(
+        bright_detail.astype(np.uint8),
+        cv2.MORPH_OPEN,
+        np.ones((3, 3), dtype=np.uint8),
+    )
+
+    component_count, _, stats, centroids = cv2.connectedComponentsWithStats(
+        bright_detail,
+        8,
+    )
+    colonies = []
+    confluent_area = 0
+    for index in range(1, component_count):
+        area = int(stats[index, cv2.CC_STAT_AREA])
+        width = int(stats[index, cv2.CC_STAT_WIDTH])
+        height = int(stats[index, cv2.CC_STAT_HEIGHT])
+        if area > 1200:
+            confluent_area += area
+        aspect_ratio = width / max(height, 1)
+        fill_ratio = area / max(width * height, 1)
+        if (
+            8 <= area <= 1200
+            and 0.45 <= aspect_ratio <= 2.20
+            and fill_ratio >= 0.22
+        ):
+            colonies.append((area, centroids[index]))
+
+    colony_count = len(colonies)
+    if colony_count == 0:
+        return None
+
+    areas = np.asarray([item[0] for item in colonies], dtype=np.float32)
+    centers = np.asarray([item[1] for item in colonies], dtype=np.float32)
+    if colony_count >= 2:
+        distances = np.linalg.norm(
+            centers[:, None, :] - centers[None, :, :],
+            axis=2,
+        )
+        np.fill_diagonal(distances, np.inf)
+        nearest_distances = distances.min(axis=1)
+        median_separation = float(np.median(nearest_distances))
+        close_fraction = float((nearest_distances < 22).mean())
+    else:
+        median_separation = 0.0
+        close_fraction = 0.0
+
+    linearity = 1.0
+    if colony_count >= 3:
+        eigenvalues = np.linalg.eigvalsh(np.cov(centers.T))
+        linearity = float(eigenvalues[-1] / max(eigenvalues[0], 1e-6))
+
+    # 菌落数量：不超过优先档上限记满分（菌少优先），超过后平滑衰减
+    count_score = float(
+        np.exp(-max(0.0, colony_count - SLICE_PREFERRED_MAX_COLONIES) / 6.0)
+    )
+
+    # 分布均匀性：最近邻距离变异系数 + 4x4 网格菌落计数变异系数
+    if colony_count >= 3 and median_separation > 0:
+        nearest_cv = float(
+            np.std(nearest_distances) / max(np.mean(nearest_distances), 1e-6)
+        )
+        nn_score = float(np.clip(1.0 - (nearest_cv - 0.35) / 0.65, 0.0, 1.0))
+    else:
+        nn_score = 1.0
+
+    grid_score = 1.0
+    if colony_count >= 4:
+        tile_height, tile_width = gray.shape[:2]
+        grid_cols = np.clip(
+            (centers[:, 0] / (tile_width / 4.0)).astype(np.int32),
+            0,
+            3,
+        )
+        grid_rows = np.clip(
+            (centers[:, 1] / (tile_height / 4.0)).astype(np.int32),
+            0,
+            3,
+        )
+        grid_counts = np.zeros(16, dtype=np.float32)
+        np.add.at(grid_counts, grid_rows * 4 + grid_cols, 1.0)
+        grid_mean = colony_count / 16.0
+        grid_std = float(
+            np.sqrt(max(np.mean(grid_counts ** 2) - grid_mean ** 2, 0.0))
+        )
+        grid_cv = grid_std / max(grid_mean, 1e-6)
+        grid_score = float(np.clip(1.0 - (grid_cv - 1.0) / 1.6, 0.0, 1.0))
+    uniformity_score = 0.5 * nn_score + 0.5 * grid_score
+
+    separation_score = float(
+        np.clip((median_separation - 18) / 35, 0.0, 1.0)
+    )
+    shape_score = 1.0 - float((areas > 300).mean())
+    isolation_score = 1.0 - close_fraction
+    contrast_score = min(gray_std / 25.0, 1.0)
+    linearity_penalty = float(np.clip((linearity - 2) / 6, 0.0, 1.0))
+    confluent_penalty = min(
+        (confluent_area / float(gray.size)) / 0.10,
+        1.0,
+    )
+    score = (
+        0.30 * count_score
+        + 0.20 * uniformity_score
+        + 0.15 * separation_score
+        + 0.15 * isolation_score
+        + 0.10 * shape_score
+        + 0.10 * contrast_score
+        - 0.20 * linearity_penalty
+        - 0.20 * confluent_penalty
+    )
+    return max(0.0, float(score)), colony_count
+
+def _select_detection_image(
+    image,
+    image_path,
+    plate_geometry=None,
+    force_slice=False,
+):
     height, width = image.shape[:2]
     selection = {
         "applied": False,
@@ -94,63 +287,122 @@ def _select_detection_image(image, image_path, upload_dir):
         "selected_tile": None,
         "confidence": None,
     }
-    if width <= SLICE_TRIGGER_SIZE and height <= SLICE_TRIGGER_SIZE:
+    if not force_slice and not _should_slice_image(width, height):
         return image, image_path, None, selection
 
-    slice_root = os.path.join(upload_dir, "detection_slices", uuid.uuid4().hex)
-    source_dir = os.path.join(slice_root, "source")
-    tile_dir = os.path.join(slice_root, "tiles")
-    os.makedirs(source_dir, exist_ok=True)
-    source_ext = os.path.splitext(image_path)[1] or ".jpg"
-    source_path = os.path.join(source_dir, f"source_{uuid.uuid4().hex}{source_ext}")
-    shutil.copy2(image_path, source_path)
+    stride = int(SLICE_SIZE * 0.8)
+    x_positions = _tile_positions(width, SLICE_SIZE, stride)
+    y_positions = _tile_positions(height, SLICE_SIZE, stride)
+    ranked_tiles = []
+    for row, y in enumerate(y_positions):
+        for column, x in enumerate(x_positions):
+            tile = image[y:y + SLICE_SIZE, x:x + SLICE_SIZE]
+            plate_mask, plate_coverage = _plate_coverage_mask(
+                x,
+                y,
+                SLICE_SIZE,
+                plate_geometry,
+            )
+            if plate_coverage < SLICE_MIN_PLATE_COVERAGE:
+                continue
+            scored = _tile_content_score(tile, plate_mask)
+            if scored is None:
+                continue
+            content_score, colony_count = scored
+            ranked_tiles.append({
+                "image": tile,
+                "content_score": content_score,
+                "colony_count": colony_count,
+                "plate_coverage": plate_coverage,
+                "name": f"tile_r{row + 1:02d}_c{column + 1:02d}",
+            })
 
-    slice_images(
-        source_dir,
-        output_dir=tile_dir,
-        slice_size=SLICE_SIZE,
-        overlap_ratio=0.2,
-        recursive=False,
-        min_std=0,
-        min_edges=0,
-    )
-    tile_paths = sorted(
-        os.path.join(tile_dir, name)
-        for name in os.listdir(tile_dir)
-        if name.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"))
-    )
-    if not tile_paths:
-        raise ValueError("大图切片后没有生成可检测图片")
+    if not ranked_tiles:
+        return image, image_path, None, selection
 
-    sampled_paths = random.sample(tile_paths, min(SLICE_SAMPLE_COUNT, len(tile_paths)))
-    sampled_images = []
-    readable_paths = []
-    for tile_path in sampled_paths:
-        tile = _read_image_bgr_from_path(tile_path)
-        if tile is not None:
-            sampled_images.append(tile)
-            readable_paths.append(tile_path)
-    if not sampled_images:
-        raise ValueError("随机抽取的切片均无法读取")
+    ranked_tiles.sort(key=lambda item: item["content_score"], reverse=True)
+    candidates = ranked_tiles[:SLICE_CANDIDATE_COUNT]
+    # 训练数据是 448x448 切片（HwishAI 预处理统一压成 224x224），
+    # 所以切片直接按原尺寸分类即可，无需放大，否则偏离训练分布
+    classifications = classify_images([item["image"] for item in candidates])
+    risk_order = {"low": 0, "medium": 1, "high": 2}
 
-    classifications = classify_images(sampled_images)
-    best_index = max(
-        range(len(classifications)),
-        key=lambda index: float(classifications[index].get("confidence", 0.0)),
+    def _pick_key(index):
+        risk_level = (
+            classifications[index].get("input_risk") or {}
+        ).get("level", "medium")
+        return (
+            -float(candidates[index]["content_score"]),
+            risk_order.get(risk_level, 1),
+            -float(classifications[index].get("confidence", 0.0)),
+        )
+
+    # 聚合权重：内容分加权；高风险块视为无效样本，剔除出聚合
+    aggregate_weights = []
+    for index, item in enumerate(candidates):
+        risk_level = (
+            classifications[index].get("input_risk") or {}
+        ).get("level", "medium")
+        aggregate_weights.append(
+            0.0 if risk_level == "high" else float(item["content_score"])
+        )
+
+    fused_classification = None
+    fused_tile_count = 0
+    if any(weight > 0 for weight in aggregate_weights):
+        fused_tile_count = sum(1 for weight in aggregate_weights if weight > 0)
+        fused_classification = fuse_predictions(
+            classifications,
+            aggregate_weights,
+        )
+
+    valid_indices = [
+        index for index, weight in enumerate(aggregate_weights) if weight > 0
+    ]
+    if valid_indices:
+        # 优先取菌落数不超过优先档上限的稀疏块（菌图可读性好、便于人工复核），
+        # 稀疏块不存在时退回内容分最高的块
+        sparse_indices = [
+            index for index in valid_indices
+            if (candidates[index].get("colony_count") or 999)
+            <= SLICE_PREFERRED_MAX_COLONIES
+        ]
+        best_index = max(
+            sparse_indices or valid_indices,
+            key=lambda index: aggregate_weights[index],
+        )
+    else:
+        # 全部高风险：退回原有选块逻辑（内容分 → 风险 → 置信度）
+        best_index = min(range(len(classifications)), key=_pick_key)
+    best_tile = candidates[best_index]
+    best_classification = (
+        fused_classification
+        if fused_classification is not None
+        else classifications[best_index]
     )
-    best_path = readable_paths[best_index]
-    best_classification = classifications[best_index]
+    selection_score = (
+        0.75 * best_tile["content_score"]
+        + 0.25 * float(best_classification.get("confidence", 0.0))
+    )
     selection.update({
         "applied": True,
         "tile_size": [SLICE_SIZE, SLICE_SIZE],
-        "total_tiles": len(tile_paths),
-        "sampled_tiles": len(sampled_images),
-        "selected_tile": os.path.basename(best_path),
+        "total_tiles": len(x_positions) * len(y_positions),
+        "eligible_tiles": len(ranked_tiles),
+        "sampled_tiles": len(candidates),
+        "selected_tile": best_tile["name"],
+        "selected_colony_count": best_tile.get("colony_count"),
+        "candidate_colony_counts": [
+            item.get("colony_count") for item in candidates
+        ],
+        "content_score": round(best_tile["content_score"], 6),
+        "plate_coverage": round(best_tile["plate_coverage"], 6),
+        "selection_score": round(selection_score, 6),
         "confidence": round(float(best_classification.get("confidence", 0.0)), 6),
-        "_work_dir": slice_root,
+        "aggregated": fused_classification is not None,
+        "aggregated_tiles": fused_tile_count,
     })
-    return sampled_images[best_index], best_path, best_classification, selection
-
+    return best_tile["image"], image_path, best_classification, selection
 
 def _preprocess_for_match(img_bgr, size=256, crop_ratio=0.8):
     cropped = _center_crop(img_bgr, crop_ratio=crop_ratio)
@@ -267,16 +519,34 @@ def orb_detect():
             "review_reasons": [],
         }
         detection_image = q_raw
-        if ENABLE_PLATE_CROP:
+        plate_geometry = None
+        is_large_image = _should_slice_image(q_raw.shape[1], q_raw.shape[0])
+        if ENABLE_PLATE_CROP and is_large_image:
             try:
-                detection_image, crop_detection = crop_plate(q_raw)
+                cropped_image, crop_detection = crop_plate(q_raw)
+                crop_confidence = float(crop_detection.confidence)
+                crop_reasons = list(crop_detection.review_reasons)
+                apply_crop = (
+                    crop_confidence >= 0.80
+                    and "little_background_removed" not in crop_reasons
+                )
+                if apply_crop:
+                    detection_image = cropped_image
+                # 即使未裁剪，也用检测到的培养皿几何过滤切片，避免背景块参与选块
+                origin_x = crop_detection.x1 if apply_crop else 0
+                origin_y = crop_detection.y1 if apply_crop else 0
+                plate_geometry = {
+                    "cx": crop_detection.cx - origin_x,
+                    "cy": crop_detection.cy - origin_y,
+                    "radius": crop_detection.radius,
+                }
                 plate_crop.update({
                     "detected": True,
-                    "applied": True,
-                    "confidence": round(float(crop_detection.confidence), 6),
+                    "applied": apply_crop,
+                    "confidence": round(crop_confidence, 6),
                     "method": crop_detection.method,
                     "needs_review": crop_detection.needs_review,
-                    "review_reasons": list(crop_detection.review_reasons),
+                    "review_reasons": crop_reasons,
                     "bbox": [
                         crop_detection.x1,
                         crop_detection.y1,
@@ -291,38 +561,107 @@ def orb_detect():
             except (ValueError, cv2.error) as exc:
                 plate_crop["reason"] = str(exc)
 
-        detection_image, detection_image_path, selected_classification, image_selection = (
-            _select_detection_image(detection_image, image_path, upload_dir)
+        whole_plate_image = detection_image
+        detection_image, _, selected_classification, image_selection = (
+            _select_detection_image(
+                detection_image,
+                image_path,
+                plate_geometry=plate_geometry,
+                force_slice=is_large_image,
+            )
         )
+        classification = selected_classification
+        if classification is None:
+            classifications = classify_images([detection_image])
+            classification = classifications[0] if classifications else None
+        if not classification or not classification.get("top3"):
+            return jsonify({
+                "success": False,
+                "message": "HwishAI未返回菌种候选",
+            })
+
+        # 整皿图分类：还原训练域视图（中心75%方窗 -> 短边1200），
+        # 实测原始皿 Top1 6% -> 33%，远超原生分辨率整皿与 448 切片路径
+        whole_plate_classification = None
+        if is_large_image:
+            try:
+                plate_view = _training_view(whole_plate_image)
+                wp_results = classify_images([plate_view])
+                whole_plate_classification = wp_results[0] if wp_results else None
+            except Exception:
+                whole_plate_classification = None
+
+        low_confidence = False
+        if whole_plate_classification and whole_plate_classification.get("top3"):
+            wp_conf = whole_plate_classification["top3"][0]["confidence"]
+            wp_risk = (whole_plate_classification.get("input_risk") or {}).get("level")
+            tile_risk = (classification.get("input_risk") or {}).get("level")
+            tile_conf = classification["top3"][0]["confidence"]
+            # 整皿训练域视图是单路径中最准的（实测 33% > 切片 12%），
+            # 只要它置信度不算太低就优先采用；仅在其极弱时回退到置信度更高的路径
+            if wp_conf >= 0.15 or wp_conf >= tile_conf or tile_conf < 0.4:
+                classification = whole_plate_classification
+                # ---- 门禁已注释（演示模式）：不再对整皿视角做风险降级 ----
+                # if wp_risk == "high" and tile_risk != "high":
+                #     risk = classification.get("input_risk") or {}
+                #     risk["level"] = "medium"
+                #     risk["label"] = "需复核"
+                #     risk["message"] = (
+                #         "整皿图置信度有限，Top3可作为候选，"
+                #         "建议结合MALDI-TOF、16S或其他检测结果复核。"
+                #     )
+                #     classification["input_risk"] = risk
+        if classification["top3"][0]["confidence"] < 0.4:
+            low_confidence = True
+
+        result_filename = (
+            f"{os.path.splitext(filename)[0]}_classified.jpg"
+        )
+        result_path = os.path.join(result_dir, result_filename)
+        if not cv2.imwrite(result_path, detection_image):
+            raise ValueError("识别结果图片保存失败")
+
+        raw_image_confidence = float(classification.get("confidence", 0.0))
+        # ---- 门禁已注释（演示模式）：缺失 input_risk 时也给无害默认值 ----
+        input_risk = classification.get("input_risk") or {
+            "level": "low",
+            "label": "未启用",
+            "score": 0.0,
+            "soft_only": True,
+            "temporary_gate": False,
+            "message": "门禁已关闭（演示模式），Top3 直接来自封闭分类器与 XGBoost 打分。",
+            "reasons": [],
+            "signals": {},
+        }
+        image_selection["confidence"] = round(raw_image_confidence, 6)
+        image_selection["risk_level"] = input_risk.get("level", "medium")
+
+        # ---- 门禁已注释（演示模式）：高风险拒答不再生效，任何图都正常返回 Top3 ----
+        # if input_risk.get("level") == "high":
+        #     rejection_message = (
+        #         "图片未通过输入有效性检查，请上传直接拍摄的培养皿或菌落原图"
+        #     )
+        #     return jsonify({
+        #         "success": True,
+        #         "accepted": False,
+        #         "code": "input_risk_rejected",
+        #         "message": rejection_message,
+        #         "candidates": [],
+        #         "detections": [],
+        #         "result_path": result_path,
+        #         "result_image_url": url_for(
+        #             "static",
+        #             filename=f"results/{result_filename}",
+        #         ),
+        #         "recommended_strain_name": "",
+        #         "recommended_match_score": 0.0,
+        #         "input_risk": input_risk,
+        #         "analysis_text": f"{rejection_message}。{input_risk.get('message', '')}",
+        #         "plate_crop": plate_crop,
+        #         "image_selection": image_selection,
+        #     })
+
         strain_candidates = _strain_match_candidates()
-
-        try:
-            detection_result = detect_and_draw(
-                image_path=detection_image_path,
-                save_dir=result_dir,
-                confidence_threshold=0.5,
-                strain_candidates=strain_candidates,
-                image_bgr=detection_image,
-                image_classification=selected_classification,
-            )
-        finally:
-            slice_work_dir = image_selection.pop("_work_dir", None)
-            if slice_work_dir:
-                shutil.rmtree(slice_work_dir, ignore_errors=True)
-
-        detections = detection_result.get("detections") or []
-        if not detection_result.get("success"):
-            return jsonify({"success": False, "message": detection_result.get("error") or "菌落检测识别失败"})
-
-        classification = detection_result.get("classification") or {}
-        if image_selection.get("confidence") is None:
-            image_selection["confidence"] = round(
-                float(classification.get("confidence", 0.0)),
-                6,
-            )
-        if not classification.get("top3"):
-            return jsonify({"success": False, "message": "HwishAI未返回菌种候选"})
-
         strain_by_scientific_name = {
             " ".join(candidate.get("scientific_name", "").split()).casefold(): candidate
             for candidate in strain_candidates
@@ -332,13 +671,32 @@ def orb_detect():
             "Faucicola osloensis": "Moraxella osloensis",
             "Staphylococcus ureilyticu": "Staphylococcus ureilyticus",
         }
+        knowledge_lookup_names = [
+            classifier_aliases.get(item.get("species_name", ""), item.get("species_name", ""))
+            for item in classification["top3"]
+            if item.get("species_name")
+        ]
+        knowledge_by_scientific_name = {}
+        if knowledge_lookup_names:
+            knowledge_records = (
+                db.session.query(BacdiveRecord.id, BacdiveRecord.species_name)
+                .filter(BacdiveRecord.species_name.in_(knowledge_lookup_names))
+                .order_by(BacdiveRecord.bacdive_id)
+                .all()
+            )
+            for record_id, species_name in knowledge_records:
+                normalized_name = " ".join((species_name or "").split()).casefold()
+                knowledge_by_scientific_name.setdefault(normalized_name, record_id)
+
         top_candidates = []
         for rank, item in enumerate(classification["top3"], start=1):
             scientific_name = item.get("species_name", "")
             lookup_name = classifier_aliases.get(scientific_name, scientific_name)
-            strain = strain_by_scientific_name.get(
-                " ".join(lookup_name.split()).casefold()
-            )
+            normalized_lookup_name = " ".join(lookup_name.split()).casefold()
+            strain = strain_by_scientific_name.get(normalized_lookup_name)
+            knowledge_record_id = (
+                strain.get("knowledge_record_id") if strain else None
+            ) or knowledge_by_scientific_name.get(normalized_lookup_name)
             classifier_confidence = float(item.get("confidence", 0.0))
             classifier_chinese_name = item.get("chinese_name", "")
             top_candidates.append({
@@ -352,42 +710,60 @@ def orb_detect():
                 "classifier_species_name": scientific_name,
                 "classifier_chinese_name": classifier_chinese_name,
                 "classifier_confidence": classifier_confidence,
+                "effective_confidence": classifier_confidence,
                 "match_score": classifier_confidence,
                 "image_score": classifier_confidence,
                 "low_confidence": classifier_confidence < 0.5,
+                "input_risk_level": input_risk.get("level", "medium"),
                 "recognition_model": f"HwishAI {HWISHAI_CLASSIFIER_MODEL}",
+                "knowledge_url": (
+                    url_for(
+                        "strain_showcase.detail",
+                        record_id=knowledge_record_id,
+                    )
+                    if knowledge_record_id
+                    else None
+                ),
             })
 
-        if not top_candidates:
-            top_candidates = [detections[0]]
         top_detection = top_candidates[0]
-        yolo_summary = f"YOLO已框选{len(detections)}个菌落，" if detections else ""
         selection_summary = (
-            f"大图随机抽检{image_selection['sampled_tiles']}张切片并选取最高置信度切片，"
+            f"大图已优先选取培养皿内部的孤立单菌落切片，"
             if image_selection["applied"]
             else ""
         )
+        risk_summary = input_risk.get(
+            "message",
+            "软风险信号暂不可用，Top3仅作为候选结果。",
+        )
         analysis_text = (
             f"{selection_summary}"
-            f"{yolo_summary}HwishAI已完成菌种识别。"
-            f"当前最佳菌种：{top_detection.get('matched_strain_name', '未知菌种')}（{top_detection.get('match_score', 0.0) * 100:.2f}%）。"
+            f"HwishAI已完成菌种识别。"
+            f"当前最佳菌种：{top_detection.get('matched_strain_name', '未知菌种')}"
+            f"（相对匹配度{top_detection.get('match_score', 0.0) * 100:.2f}%）。"
+            f"{risk_summary}"
         )
+        if low_confidence:
+            analysis_text += "当前识别置信度较低，建议结合原始平板形态或其他检测结果复核。"
 
         return jsonify({
             "success": True,
-            "message": "YOLO框选与HwishAI识别完成",
+            "accepted": True,
+            "message": "HwishAI菌种识别完成（BioCLIP + XGBoost）",
             "candidates": top_candidates,
-            "detections": detections,
-            "result_path": detection_result.get("result_path"),
+            "detections": [],
+            "result_path": result_path,
             "result_image_url": url_for(
                 "static",
-                filename=f"results/{os.path.basename(detection_image_path)}",
+                filename=f"results/{result_filename}",
             ),
             "recommended_strain_name": top_detection.get("matched_strain_name", ""),
             "recommended_match_score": top_detection.get("match_score", 0.0),
+            "input_risk": input_risk,
             "analysis_text": analysis_text,
             "plate_crop": plate_crop,
             "image_selection": image_selection,
+            "low_confidence": low_confidence,
         })
     except Exception as e:
         print(f"菌落检测识别失败: {str(e)}")
@@ -489,6 +865,34 @@ def save_detection_report():
         })
 
 
+@ai_detection_bp.route("/api/check_sample_code", methods=["GET"])
+def check_sample_code():
+    """检查样品编号是否已存在于菌种数据库，存在则返回现有记录信息"""
+    try:
+        code = (request.args.get("sample_code") or "").strip()
+        if not code:
+            return jsonify({"success": True, "exists": False})
+
+        target = Sample.query.filter_by(sample_code=code).first()
+        if not target:
+            return jsonify({"success": True, "exists": False})
+
+        return jsonify({
+            "success": True,
+            "exists": True,
+            "existing": {
+                "sample_id": target.id,
+                "strain_name": target.final_strain_name or "",
+                "collect_date": target.collect_date.strftime("%Y-%m-%d") if target.collect_date else "",
+                "location": target.collect_location or "",
+                "last_detect_time": target.last_detect_time.strftime("%Y-%m-%d %H:%M") if target.last_detect_time else "",
+            },
+        })
+    except Exception as e:
+        print(f"检查样品编号失败: {str(e)}")
+        return jsonify({"success": False, "message": f"检查失败: {str(e)}"})
+
+
 def _get_pdf_chinese_font_name():
     candidates = [
         ("PDF_CN", r"C:\\Windows\\Fonts\\msyh.ttc"),
@@ -565,6 +969,9 @@ def export_detection_report_pdf():
         source_location = (request.form.get('source_location') or '').strip()
         strain_name = (request.form.get('strain_name') or '').strip()
         detection_result = (request.form.get('detection_result') or '').strip()
+        maldi_candidates_raw = (request.form.get('maldi_candidates') or '').strip()
+        sequence_16s = (request.form.get('sequence_16s') or '').strip()
+        result_16s_raw = (request.form.get('result_16s') or '').strip()
         image_file = request.files.get('image')
         if not image_file or not image_file.filename:
             return jsonify({'success': False, 'message': '请先上传样本图片'}), 400
@@ -572,6 +979,20 @@ def export_detection_report_pdf():
         sample_image_bytes = image_file.read()
         maldi_file = request.files.get('maldi_image')
         maldi_image_bytes = maldi_file.read() if maldi_file and maldi_file.filename else None
+
+        try:
+            maldi_candidates = json.loads(maldi_candidates_raw) if maldi_candidates_raw else []
+        except (TypeError, ValueError):
+            maldi_candidates = []
+        if not isinstance(maldi_candidates, list):
+            maldi_candidates = []
+
+        try:
+            result_16s = json.loads(result_16s_raw) if result_16s_raw else None
+        except (TypeError, ValueError):
+            result_16s = None
+        if not isinstance(result_16s, dict):
+            result_16s = None
 
         font_name = _get_pdf_chinese_font_name()
         if not font_name:
@@ -614,6 +1035,93 @@ def export_detection_report_pdf():
         image_top_y = y
         _draw_image(pdf, sample_image_bytes, '样本图片', left_x, image_top_y, font_name)
         _draw_image(pdf, maldi_image_bytes, 'MALDI-TOF图谱', right_x, image_top_y, font_name)
+
+        # 补充检测信息独立成页，避免长 16S 序列挤压首页图片。
+        pdf.showPage()
+        y = page_height - 50
+        pdf.setFont(font_name, 14)
+        pdf.drawString(40, y, '补充检测结果')
+        y -= 28
+
+        def ensure_detail_space(required_height=24):
+            nonlocal y
+            if y < 45 + required_height:
+                pdf.showPage()
+                y = page_height - 50
+
+        def draw_detail_heading(title):
+            nonlocal y
+            ensure_detail_space(34)
+            pdf.setFont(font_name, 12)
+            pdf.drawString(40, y, title)
+            y -= 20
+
+        def draw_detail_text(text, font_size=10, line_height=15, x=48):
+            nonlocal y
+            max_width = page_width - x - 40
+            source_lines = str(text or '').splitlines() or ['']
+            for source_line in source_lines:
+                wrapped_lines = []
+                line = ''
+                for ch in source_line:
+                    candidate = line + ch
+                    if pdf.stringWidth(candidate, font_name, font_size) <= max_width:
+                        line = candidate
+                    else:
+                        if line:
+                            wrapped_lines.append(line)
+                        line = ch
+                wrapped_lines.append(line)
+                for wrapped_line in wrapped_lines:
+                    ensure_detail_space(line_height)
+                    pdf.setFont(font_name, font_size)
+                    pdf.drawString(x, y, wrapped_line)
+                    y -= line_height
+
+        def report_percent(value):
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return '-'
+            if abs(number) <= 1:
+                number *= 100
+            return f'{number:.2f}%'
+
+        draw_detail_heading('MALDI-TOF检测结果')
+        if maldi_candidates:
+            for index, candidate in enumerate(maldi_candidates[:5], start=1):
+                if not isinstance(candidate, dict):
+                    continue
+                strain = candidate.get('strain_name') or '未知菌种'
+                scientific = candidate.get('scientific_name') or '-'
+                score = report_percent(candidate.get('score'))
+                cosine = report_percent(candidate.get('cosine_sim'))
+                matched_count = candidate.get('matched_count', '-')
+                draw_detail_text(
+                    f'{index}. {strain}（{scientific}）  综合得分：{score}；'
+                    f'余弦相似度：{cosine}；匹配峰数：{matched_count}'
+                )
+        else:
+            draw_detail_text('未进行 MALDI-TOF 检测或未获得匹配结果。')
+        y -= 8
+
+        draw_detail_heading('16S序列')
+        compact_sequence = ''.join(sequence_16s.split())
+        draw_detail_text(compact_sequence or '未提交 16S 序列。', font_size=9, line_height=13)
+        y -= 8
+
+        draw_detail_heading('16S RNA检测结果')
+        if result_16s:
+            similarity = report_percent(result_16s.get('similarity'))
+            query_length = result_16s.get('query_length') or len(compact_sequence) or '-'
+            draw_detail_text(f'匹配菌种：{result_16s.get("strain_name") or "未知菌种"}')
+            draw_detail_text(f'拉丁名：{result_16s.get("scientific_name") or "-"}')
+            draw_detail_text(f'相似度：{similarity}')
+            draw_detail_text(f'最长匹配长度：{result_16s.get("match_length") or "-"} bp')
+            draw_detail_text(f'查询长度：{query_length} bp')
+            draw_detail_text(f'参考长度：{result_16s.get("ref_length") or "-"} bp')
+        else:
+            draw_detail_text('未进行 16S RNA 检测或未获得匹配结果。')
 
         pdf.save()
         buffer.seek(0)
@@ -782,73 +1290,4 @@ def upload_maldi_image():
         return jsonify({
             "success": False,
             "message": f"上传失败: {str(e)}"
-        })
-
-
-@ai_detection_bp.route("/api/analyze_maldi", methods=["POST"])
-def analyze_maldi():
-    """分析MALDI-TOF数据文件（CSV/Excel）并返回分析结果"""
-    try:
-        if 'maldi_file' not in request.files:
-            return jsonify({
-                "success": False,
-                "message": "没有上传文件"
-            })
-
-        file = request.files['maldi_file']
-
-        if file.filename == '':
-            return jsonify({
-                "success": False,
-                "message": "没有选择文件"
-            })
-
-        # 检查文件类型
-        allowed_extensions = {'csv', 'xlsx', 'xls'}
-        filename = secure_filename(file.filename)
-        file_ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
-
-        if file_ext not in allowed_extensions:
-            return jsonify({
-                "success": False,
-                "message": "不支持的文件格式，请上传CSV或Excel文件"
-            })
-
-        # 生成唯一的文件名
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_filename = f"maldi_data_{timestamp}_{filename}"
-
-        # 保存文件
-        upload_path = os.path.join(current_app.root_path, MALDI_UPLOAD_DIR, unique_filename)
-        os.makedirs(os.path.dirname(upload_path), exist_ok=True)
-        file.save(upload_path)
-
-        # 这里可以添加实际的分析逻辑
-        # 暂时模拟分析结果
-        import random
-        confidence = round(95 + random.random() * 4, 2)
-
-        # 模拟菌种列表
-        strains = [
-            "Lactobacillus helveticus",
-            "Lactobacillus acidophilus",
-            "Escherichia coli",
-            "Staphylococcus aureus",
-            "Bacillus subtilis"
-        ]
-        detected_strain = random.choice(strains)
-
-        return jsonify({
-            "success": True,
-            "message": "质谱分析完成",
-            "strain_name": detected_strain,
-            "confidence": confidence,
-            "filename": unique_filename
-        })
-
-    except Exception as e:
-        print(f"分析MALDI数据失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "message": f"分析失败: {str(e)}"
         })

@@ -65,29 +65,97 @@
     {% if environment_strains %}
     <section class="detail-band environment-band">
         <div class="section-heading">
-            <div><p class="eyebrow">本地环境菌数据库</p><h2>本地增强资料</h2></div>
+            <div><p class="eyebrow">本地环境菌数据库</p><h2>环境菌增强资料</h2></div>
             <span>{{ environment_strains|length }} 条匹配</span>
         </div>
+        <p class="environment-intro">以下为与当前 BacDive 菌种匹配的本地环境菌记录，用实测培养影像、培养条件与特征图谱补充公开数据库资料。</p>
         {% for strain in environment_strains %}
         <article class="environment-record">
-            <div class="environment-images">
-                <img src="{{ static_image_url(strain.main_image) }}" alt="{{ strain.name }}">
-                <img src="{{ static_image_url(strain.gram_stain_image) }}" alt="{{ strain.name }} 革兰氏染色">
+            <header class="environment-record-header">
+                <div>
+                    <span class="local-record-label">本地环境菌</span>
+                    <h3>{{ strain.name }}</h3>
+                    <p class="scientific-name">{{ strain.scientific_name or '-' }}</p>
+                </div>
+                {% if strain.strain_code %}<span class="strain-code">{{ strain.strain_code }}</span>{% endif %}
+            </header>
+
+            <div class="environment-overview">
+                <figure class="environment-images">
+                    {% if strain.main_image %}
+                    <img src="{{ static_image_url(strain.main_image) }}" alt="{{ strain.name }} 菌落图像">
+                    {% else %}
+                    <div class="environment-image-empty">暂无菌落图像</div>
+                    {% endif %}
+                    <figcaption>本地菌落图像</figcaption>
+                </figure>
+
+                <div class="environment-profile">
+                    <dl class="local-facts">
+                        <div><dt>本地分类</dt><dd>{{ strain.category or '-' }}</dd></div>
+                        <div><dt>培养基</dt><dd>{{ strain.media_links|map(attribute='medium.name')|select|join('、') or '-' }}</dd></div>
+                        <div><dt>16S 记录</dt><dd>{% if strain.strain_16s_records %}{{ strain.strain_16s_records|length }} 条{% else %}暂无{% endif %}</dd></div>
+                        <div class="local-fact-source"><dt>采集来源</dt><dd>{{ strain.sources|map(attribute='location')|select|join('、') or '-' }}</dd></div>
+                    </dl>
+                    {% if strain.summary %}
+                    <div class="environment-summary">
+                        <span>资料说明</span>
+                        <p>{{ strain.summary }}</p>
+                    </div>
+                    {% endif %}
+                </div>
             </div>
+
+            {% if strain.growth_cycles or strain.fingerprint_image %}
+            <section class="environment-evidence">
+                <div class="environment-evidence-heading">
+                    <h4>本地实测资料</h4>
+                    <span>培养影像与特征图谱</span>
+                </div>
+                <div class="environment-evidence-grid">
+                    {% if strain.growth_cycles %}
+                    <div class="evidence-panel growth-panel">
+                        <div class="evidence-panel-title"><strong>培养观察</strong><span>{{ strain.growth_cycles|length }} 个时间点</span></div>
+                        <div class="growth-strip">
+                            {% for cycle in strain.growth_cycles[:3] %}
+                            <figure><img src="{{ static_image_url(cycle.image_path) }}" alt="培养第 {{ cycle.day_number }} 天"><figcaption>第 {{ cycle.day_number }} 天</figcaption></figure>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if strain.fingerprint_image %}
+                    <div class="evidence-panel maldi-panel">
+                        <div class="evidence-panel-title"><strong>MALDI-TOF 图谱</strong><span>本地特征指纹</span></div>
+                        <figure class="local-tof-image">
+                            <img src="{{ static_image_url(strain.fingerprint_image) }}" alt="{{ strain.name }} MALDI-TOF 图谱">
+                        </figure>
+                    </div>
+                    {% endif %}
+                </div>
+            </section>
+            {% endif %}
+
             <div class="environment-content">
-                <h3>{{ strain.name }}</h3>
-                <p class="scientific-name">{{ strain.scientific_name }}</p>
-                {% if strain.summary %}<p>{{ strain.summary }}</p>{% endif %}
-                <dl class="local-facts">
-                    <div><dt>分类</dt><dd>{{ strain.category or '-' }}</dd></div>
-                    <div><dt>来源</dt><dd>{{ strain.sources|map(attribute='location')|select|join('、') or '-' }}</dd></div>
-                    <div><dt>16S</dt><dd>{% if strain.strain_16s_records %}{{ strain.strain_16s_records[0].strain_16s|length }} bp{% else %}-{% endif %}</dd></div>
-                    <div><dt>培养基</dt><dd>{{ strain.media_links|map(attribute='medium.name')|select|join('、') or '-' }}</dd></div>
-                </dl>
-                {% if strain.growth_cycles %}
-                <div class="growth-strip">
-                    {% for cycle in strain.growth_cycles[:3] %}
-                    <figure><img src="{{ static_image_url(cycle.image_path) }}" alt="培养第 {{ cycle.day_number }} 天"><figcaption>第 {{ cycle.day_number }} 天</figcaption></figure>
+                {% if strain.strain_16s_records %}
+                <div class="local-16s-list">
+                    <p class="local-16s-title">自行录入的 16S 序列（{{ strain.strain_16s_records|length }} 条）</p>
+                    {% for seq in strain.strain_16s_records %}
+                    <details class="silva-sequence" {% if loop.first %}open{% endif %}>
+                        <summary>
+                            <span>
+                                <strong>16S rRNA 序列{% if strain.strain_16s_records|length > 1 %} #{{ loop.index }}{% endif %}</strong>
+                                <small>{{ strain.strain_code or strain.name }} · 自行录入</small>
+                            </span>
+                            <span class="silva-sequence-meta">{{ (seq.strain_16s or '')|length }} nt</span>
+                        </summary>
+                        <div class="silva-sequence-body">
+                            <div class="sequence-toolbar">
+                                <span>16S rRNA 序列</span>
+                                <button type="button" class="copy-sequence" data-sequence-id="local-16s-{{ strain.id }}-{{ seq.id }}">复制序列</button>
+                            </div>
+                            <pre id="local-16s-{{ strain.id }}-{{ seq.id }}">{{ seq.strain_16s }}</pre>
+                        </div>
+                    </details>
                     {% endfor %}
                 </div>
                 {% endif %}

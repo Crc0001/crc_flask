@@ -2,7 +2,8 @@ import json
 import re
 
 from flask import Blueprint, abort, render_template, request, url_for
-from sqlalchemy import String, cast, func, or_
+from sqlalchemy import func, or_
+from sqlalchemy.dialects.mysql import match
 from sqlalchemy.orm import load_only, selectinload
 
 from app.extensions import db
@@ -10,6 +11,95 @@ from app.models import BacdiveRecord, BacdiveStrainMatch, SilvaSsuSequence, Stra
 
 
 strain_showcase_bp = Blueprint("strain_showcase", __name__, url_prefix="/strain_showcase")
+
+# 与数据库 ngram 全文索引 ft_bacdive_search 保持一致的列（缺列会报 "Can't find FULLTEXT index"）
+_BACDIVE_FT_COLUMNS = (
+    BacdiveRecord.species_name,
+    BacdiveRecord.species_name_zh,
+    BacdiveRecord.full_scientific_name,
+    BacdiveRecord.strain_designation,
+    BacdiveRecord.dsm_number,
+    BacdiveRecord.description,
+    BacdiveRecord.keywords,
+)
+
+# 列表页只加载必要列，避免把 description 等大字段全查出来
+_BACDIVE_LIST_COLUMNS = (
+    BacdiveRecord.id,
+    BacdiveRecord.bacdive_id,
+    BacdiveRecord.dsm_number,
+    BacdiveRecord.domain_name,
+    BacdiveRecord.family_name,
+    BacdiveRecord.genus_name,
+    BacdiveRecord.species_name,
+    BacdiveRecord.species_name_zh,
+    BacdiveRecord.full_scientific_name,
+    BacdiveRecord.strain_designation,
+    BacdiveRecord.type_strain,
+    BacdiveRecord.description,
+)
+
+
+def _paginate_records(query, page, per_page):
+    return (
+        query.options(load_only(*_BACDIVE_LIST_COLUMNS))
+        .paginate(page=page, per_page=per_page, error_out=False)
+    )
+
+
+def _sanitize_fulltext_query(value):
+    """清洗全文检索查询串：去除布尔运算符等特殊字符，仅保留文字与数字"""
+    return " ".join(re.sub(r"[^\w\u4e00-\u9fff]+", " ", value).split())
+
+
+def _fulltext_query(query, query_text):
+    """基于 ngram 全文索引的子串搜索（中英文均可）"""
+    sanitized = _sanitize_fulltext_query(query_text)
+    if not sanitized:
+        return None
+    ft_expr = match(*_BACDIVE_FT_COLUMNS, against=sanitized, in_boolean_mode=True)
+    return query.filter(ft_expr)
+
+
+def _search_candidates(query_without_search, query_text):
+    """按优先级返回候选查询：快路径（精确/前缀，走 B 树索引）在前，全文检索兑底
+
+    注意：MySQL 上用 .like() 而非 .ilike()——ilike 会被编译成 lower(col)，导致索引失效；
+    表排序规则 utf8mb4_unicode_ci 本身不区分大小写，两者行为一致。
+    """
+    candidates = []
+    if query_text.isdigit():
+        # 纯数字：优先精确匹配 BacDive ID（唯一索引，瞬时）
+        candidates.append(
+            query_without_search.filter(BacdiveRecord.bacdive_id == int(query_text))
+        )
+    elif not re.search(r"[\u4e00-\u9fff]", query_text):
+        words = query_text.split()
+        if not any(ch in query_text for ch in ("%", "_", "\\")):
+            if len(words) == 1:
+                # 单个拉丁词：学名/全名/属名逐个做前缀匹配（单列 LIKE 才走索引，多列 OR 会全扫）
+                for column in (
+                    BacdiveRecord.species_name,
+                    BacdiveRecord.full_scientific_name,
+                    BacdiveRecord.genus_name,
+                ):
+                    candidates.append(
+                        query_without_search.filter(column.like(f"{words[0]}%"))
+                    )
+            elif len(words) > 1:
+                # 多个拉丁词：先按完整学名做前缀匹配（如 "Bacillus cereus"），未命中再走全文
+                phrase = " ".join(words)
+                for column in (
+                    BacdiveRecord.species_name,
+                    BacdiveRecord.full_scientific_name,
+                ):
+                    candidates.append(
+                        query_without_search.filter(column.like(f"{phrase}%"))
+                    )
+    ft_query = _fulltext_query(query_without_search, query_text)
+    if ft_query is not None:
+        candidates.append(ft_query)
+    return candidates
 
 
 def _static_image_url(path):
@@ -93,52 +183,35 @@ def index():
 
     query = BacdiveRecord.query
 
-    if query_text:
-        pattern = f"%{query_text}%"
-        if re.search(r"[一-鿿]", query_text):
-            query = query.filter(BacdiveRecord.species_name_zh.ilike(pattern))
-        else:
-            query = query.filter(
-                or_(
-                    cast(BacdiveRecord.bacdive_id, String).ilike(pattern),
-                    BacdiveRecord.dsm_number.ilike(pattern),
-                    BacdiveRecord.full_scientific_name.ilike(pattern),
-                    BacdiveRecord.species_name.ilike(pattern),
-                    BacdiveRecord.strain_designation.ilike(pattern),
-                    BacdiveRecord.description.ilike(pattern),
-                    BacdiveRecord.keywords.ilike(pattern),
-                )
-            )
     if domain:
         query = query.filter(BacdiveRecord.domain_name == domain)
     if type_strain in {"yes", "no"}:
-        query = query.filter(func.lower(BacdiveRecord.type_strain) == type_strain)
+        query = query.filter(BacdiveRecord.type_strain == type_strain)
     if genus:
-        query = query.filter(BacdiveRecord.genus_name.ilike(f"%{genus}%"))
+        query = query.filter(BacdiveRecord.genus_name.like(f"%{genus}%"))
     if environment_only:
         query = query.join(BacdiveStrainMatch).distinct()
 
-    query = query.options(
-        load_only(
-            BacdiveRecord.id,
-            BacdiveRecord.bacdive_id,
-            BacdiveRecord.dsm_number,
-            BacdiveRecord.domain_name,
-            BacdiveRecord.family_name,
-            BacdiveRecord.genus_name,
-            BacdiveRecord.species_name,
-            BacdiveRecord.species_name_zh,
-            BacdiveRecord.full_scientific_name,
-            BacdiveRecord.strain_designation,
-            BacdiveRecord.type_strain,
-            BacdiveRecord.description,
+    query_without_search = query
+
+    if query_text:
+        pagination = None
+        for candidate in _search_candidates(query_without_search, query_text):
+            pagination = _paginate_records(
+                candidate.order_by(BacdiveRecord.bacdive_id.asc()), page, per_page
+            )
+            if pagination.total:
+                break
+        if pagination is None:
+            pagination = _paginate_records(
+                query_without_search.order_by(BacdiveRecord.bacdive_id.asc()),
+                page,
+                per_page,
+            )
+    else:
+        pagination = _paginate_records(
+            query_without_search.order_by(BacdiveRecord.bacdive_id.asc()), page, per_page
         )
-    )
-    pagination = query.order_by(BacdiveRecord.bacdive_id.asc()).paginate(
-        page=page,
-        per_page=per_page,
-        error_out=False,
-    )
 
     record_ids = [record.id for record in pagination.items]
     environment_by_record = {}
@@ -157,7 +230,7 @@ def index():
         "records": db.session.query(func.count(BacdiveRecord.id)).scalar() or 0,
         "type_strains": (
             db.session.query(func.count(BacdiveRecord.id))
-            .filter(func.lower(BacdiveRecord.type_strain) == "yes")
+            .filter(BacdiveRecord.type_strain == "yes")
             .scalar()
             or 0
         ),

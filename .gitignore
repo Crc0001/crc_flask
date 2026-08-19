@@ -10,6 +10,8 @@ htmlcov/
 
 # Local environments and secrets
 .venv/
+.venv-dml/
+.venv29/
 venv/
 env/
 .env
@@ -53,3 +55,7 @@ HwishAI/model/paths.json
 
 # Unrelated local scratch script
 /11.py
+
+# 本地临时目录与识别评测输出（不入库）
+tmp/
+test_results/

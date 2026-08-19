@@ -2,7 +2,14 @@ let latestDetectionSummary = '';
 let latestSelectedStrainName = '';
 let latestOrbCandidates = [];
 let latestMaldiFile = null;
+let latestMaldiChartBase64 = '';
+let latestMaldiCandidates = [];
 let latestDetectionImageUrl = '';
+let latestSelectedStrainConfidence = null; // 当前所选候选菌种的相对匹配度(0~1)
+let latestInputRisk = null; // 当前图片的组合软风险评估
+let latestInputAccepted = null; // 临时输入有效性门禁：false 时禁止候选选择与报告
+let latest16sMatchInfo = null; // 16S 匹配成功后的第一名候选，null=未匹配
+let latest16sQuerySequence = ''; // 与当前16S匹配结果对应的实际查询序列
 
 document.addEventListener('DOMContentLoaded', function() {
     // 初始化三级下拉框
@@ -203,6 +210,13 @@ function initFormValidation() {
     if (fileInput) {
         fileInput.addEventListener('change', function() {
             if (this.files.length > 0) {
+                latestOrbCandidates = [];
+                latestDetectionSummary = '';
+                latestSelectedStrainName = '';
+                latestDetectionImageUrl = '';
+                latestSelectedStrainConfidence = null;
+                latestInputRisk = null;
+                latestInputAccepted = null;
                 showFileInfo(this, '已选择: ');
                 previewSelectedImage(this.files[0]);
             }
@@ -247,6 +261,8 @@ function initMaldiUpload() {
 }
 
 function resetMaldiResultArea() {
+    latestMaldiChartBase64 = '';
+    latestMaldiCandidates = [];
     const resultPlaceholder = document.getElementById('maldi-result-placeholder');
     const matchResults = document.getElementById('maldi-match-results');
     const chartPlaceholder = document.getElementById('maldi-chart-placeholder');
@@ -309,6 +325,8 @@ function handleMaldiGenerate() {
     .then(data => {
         console.log('MALDI匹配响应:', data);
         if (data.success) {
+            latestMaldiChartBase64 = data.comparison_plot || '';
+            latestMaldiCandidates = Array.isArray(data.candidates) ? data.candidates : [];
             // 显示质谱图
             if (data.comparison_plot) {
                 const img = document.createElement('img');
@@ -436,6 +454,8 @@ function init16sMatching() {
 }
 
 function reset16sResultArea() {
+    latest16sMatchInfo = null;
+    latest16sQuerySequence = '';
     const resultPlaceholder = document.getElementById('rna-result-placeholder');
     const matchResults = document.getElementById('rna-match-results');
 
@@ -476,6 +496,8 @@ function handle16sMatch() {
     .then(data => {
         console.log('16S匹配响应:', data);
         if (data.success) {
+            latest16sMatchInfo = (data.candidates && data.candidates[0]) || null;
+            latest16sQuerySequence = sequence;
             // 显示匹配结果
             display16sMatchResults(data.candidates, data.query_info);
             setButtonState(matchBtn, false, '匹配');
@@ -575,7 +597,7 @@ function initDetectionButtons() {
             return;
         }
 
-        resultBox.innerHTML = '<div style="text-align:center; padding:30px;">培养皿预处理、YOLO框选与 HwishAI 识别中...</div>';
+        resultBox.innerHTML = '<div style="text-align:center; padding:30px;">图片预处理、输入有效性检查与 HwishAI 识别中...</div>';
         setButtonState(detectBtn, true, '检测中...');
 
         const formData = new FormData();
@@ -591,18 +613,39 @@ function initDetectionButtons() {
                     throw new Error(data.message || '智能检测失败');
                 }
 
-                const detections = Array.isArray(data.detections) ? data.detections : [];
+                // ---- 门禁已注释（演示模式）：后端不再返回 accepted=false，拒答分支不再触发 ----
+                // if (data.accepted === false) {
+                //     latestOrbCandidates = [];
+                //     latestInputRisk = data.input_risk || null;
+                //     latestInputAccepted = false;
+                //     latestDetectionSummary = data.analysis_text || data.message || '';
+                //     latestSelectedStrainName = '';
+                //     latestDetectionImageUrl = data.result_image_url || '';
+                //     latestSelectedStrainConfidence = null;
+                //     resultBox.innerHTML = renderRejectedInput(data.input_risk, data.message);
+                //     updateDetectedPreview(latestDetectionImageUrl, data.image_selection);
+                //     showError(data.message || '图片未通过输入有效性检查');
+                //     return;
+                // }
+
                 const candidates = Array.isArray(data.candidates) ? data.candidates : [];
                 if (candidates.length === 0) {
                     throw new Error('HwishAI 未返回候选菌种');
                 }
 
                 latestOrbCandidates = candidates;
-                latestDetectionSummary = data.analysis_text || '培养皿预处理、YOLO框选与 HwishAI 识别已完成。';
+                latestInputRisk = data.input_risk || null;
+                latestInputAccepted = true;
+                latestDetectionSummary = data.analysis_text || 'HwishAI 菌种识别已完成。';
                 latestSelectedStrainName = data.recommended_strain_name || candidates[0].matched_strain_name || '';
                 latestDetectionImageUrl = data.result_image_url || '';
+                const topScore = candidates[0].effective_confidence;
+                const topConfidence = Number(topScore !== undefined && topScore !== null
+                    ? topScore
+                    : (candidates[0].classifier_confidence || candidates[0].match_score || 0));
+                latestSelectedStrainConfidence = Number.isFinite(topConfidence) ? topConfidence : null;
 
-                resultBox.innerHTML = renderOrbCandidates(candidates, latestSelectedStrainName, detections.length, data.plate_crop, data.image_selection);
+                resultBox.innerHTML = renderOrbCandidates(candidates, latestSelectedStrainName, data.input_risk, data.plate_crop, data.image_selection);
                 updateDetectedPreview(latestDetectionImageUrl, data.image_selection);
                 bindCandidateSelection();
 
@@ -616,6 +659,9 @@ function initDetectionButtons() {
                 latestDetectionSummary = '';
                 latestSelectedStrainName = '';
                 latestDetectionImageUrl = '';
+                latestSelectedStrainConfidence = null;
+                latestInputRisk = null;
+                latestInputAccepted = null;
                 updateDetectedPreview('');
             })
             .finally(() => {
@@ -624,26 +670,65 @@ function initDetectionButtons() {
     });
 }
 
-function renderOrbCandidates(candidates, selectedName, detectedCount, plateCrop, imageSelection) {
+// ---- 门禁已注释（演示模式）：拒答渲染函数不再使用 ----
+// function renderRejectedInput(inputRisk, message) {
+//     const riskMessage = escapeHtml(message || '图片未通过输入有效性检查，请更换图片后重试。');
+//     const riskReason = escapeHtml((inputRisk && inputRisk.message) || '当前图片与菌落图像特征差异较大。');
+//     return `
+//         <div class="orb-result-wrap orb-rejected-input">
+//             <div class="orb-rejected-icon" aria-hidden="true">!</div>
+//             <div class="orb-rejected-content">
+//                 <div class="orb-rejected-title">未展示菌种候选</div>
+//                 <div class="orb-rejected-message">${riskMessage}</div>
+//                 <div class="orb-rejected-reason">${riskReason}</div>
+//                 <ul class="orb-rejected-tips">
+//                     <li>请上传直接拍摄的培养皿、平板或单菌落原图</li>
+//                     <li>避免网页截图、广告图、文档、仪器或大面积文字</li>
+//                     <li>尽量保证菌落清晰、光照均匀，减少无关背景</li>
+//                 </ul>
+//                 <div class="orb-rejected-foot">未通过检测门禁，已停止 Top3 展示。</div>
+//             </div>
+//         </div>
+//     `;
+// }
+
+function renderOrbCandidates(candidates, selectedName, inputRisk, plateCrop, imageSelection) {
     const rows = (candidates || []).slice(0, 3).map((item, idx) => {
         const strainName = item.matched_strain_name || item.strain_name || `菌落${idx + 1}`;
         const checked = strainName === selectedName ? 'checked' : '';
-        const score = Number(item.classifier_confidence || item.match_score || item.score || 0) * 100;
-
-
+        const effectiveScore = item.effective_confidence;
+        const score = Number(effectiveScore !== undefined && effectiveScore !== null
+            ? effectiveScore
+            : (item.classifier_confidence || item.match_score || item.score || 0)) * 100;
         const lowConfidence = score < 50;
+        const confidenceLabel = '模型相对匹配度';
+        const latinName = escapeHtml(item.classifier_species_name || strainName);
+        const knowledgeUrl = item.knowledge_url ? escapeHtml(item.knowledge_url) : '';
+        const knowledgeEntry = knowledgeUrl
+            ? `
+                <div class="orb-candidate-knowledge">
+                    <span class="orb-knowledge-hint">点此跳转</span>
+                    <a class="orb-knowledge-link" href="${knowledgeUrl}" target="_blank" rel="noopener noreferrer" title="在新页面查看${escapeHtml(strainName)}的知识库详情">${latinName}</a>
+                </div>
+            `
+            : `
+                <div class="orb-candidate-knowledge unavailable">
+                    <span class="orb-knowledge-hint">知识库暂无收录</span>
+                    <span class="orb-candidate-metrics">${latinName}</span>
+                </div>
+            `;
 
         return `
-            <label class="orb-candidate-item ${checked ? 'selected' : ''} ${lowConfidence ? 'low-confidence' : 'high-confidence'}" data-strain-name="${escapeHtml(strainName)}">
-                <div class="orb-candidate-main">
+            <div class="orb-candidate-item ${checked ? 'selected' : ''} ${lowConfidence ? 'low-confidence' : 'high-confidence'}" data-strain-name="${escapeHtml(strainName)}">
+                <label class="orb-candidate-main">
                     <input type="radio" name="orb-candidate" value="${escapeHtml(strainName)}" ${checked}>
                     <div class="orb-candidate-text">
                         <div class="orb-candidate-name">${escapeHtml(strainName)}</div>
-                        <div class="orb-candidate-sub">${escapeHtml(item.classifier_species_name || '')} · HwishAI ${score.toFixed(2)}%${lowConfidence ? ' <span class="match-low-tag">低于50%</span>' : ''}</div>
+                        <div class="orb-candidate-sub">${escapeHtml(item.classifier_species_name || '')} · ${confidenceLabel} ${score.toFixed(2)}%${lowConfidence ? ' <span class="match-low-tag">低匹配</span>' : ''}</div>
                     </div>
-                </div>
-                <div class="orb-candidate-metrics">${escapeHtml(item.recognition_model || 'HwishAI 46类增强版')}</div>
-            </label>
+                </label>
+                ${knowledgeEntry}
+            </div>
         `;
     }).join('');
 
@@ -656,21 +741,32 @@ function renderOrbCandidates(candidates, selectedName, detectedCount, plateCrop,
         `;
     }
 
+    // ---- 门禁已注释（演示模式）：不再展示"输入有效性"风险面板，结果纯为 BioCLIP + XGBoost ----
+    // const riskLevel = inputRisk && ['low', 'medium', 'high'].includes(inputRisk.level)
+    //     ? inputRisk.level
+    //     : 'medium';
+    // const riskLabel = escapeHtml((inputRisk && inputRisk.label) || '需复核');
+    // const riskMessage = escapeHtml((inputRisk && inputRisk.message) || '软风险信号暂不可用，Top3仅作为候选结果。');
+    // const riskPanel = `
+    //     <div class="orb-risk-warning ${riskLevel}">
+    //         <div class="orb-risk-title">输入有效性：${riskLabel}</div>
+    //         <div>${riskMessage}</div>
+    //         <div class="orb-risk-basis">判定依据：原始分类概率 + 菌种特征距离 + 零样本语义（当前结果建议结合 MALDI-TOF 或 16S 复核）</div>
+    //     </div>
+    // `;
+    const riskPanel = '';
     const cropNote = plateCrop && plateCrop.applied
-        ? ' · 培养皿已裁剪' + (plateCrop.needs_review ? '（建议复核裁剪范围）' : '')
-        : '';
-
-    const yoloNote = Number(detectedCount || 0) > 0
-        ? `YOLO 已框选 ${Number(detectedCount)} 个菌落${cropNote} · `
+        ? '培养皿已裁剪' + (plateCrop.needs_review ? '（建议复核裁剪范围）' : '') + ' · '
         : '';
     const sliceNote = imageSelection && imageSelection.applied
-        ? `大图已切片，随机抽检 ${Number(imageSelection.sampled_tiles || 0)} 张并返回最高置信度切片 · `
+        ? `大图已切片并优先选取培养皿内部的孤立单菌落区域 · `
         : '';
     return `
         <div class="orb-result-wrap">
             <div class="orb-result-title">HwishAI 候选菌种（Top ${Math.min((candidates || []).length, 3)}）</div>
+            ${riskPanel}
             <div class="orb-candidate-list">${rows}</div>
-            <div class="orb-result-note">${sliceNote}${yoloNote}当前选择：<strong>${escapeHtml(selectedName || '')}</strong></div>
+            <div class="orb-result-note">${sliceNote}${cropNote}当前选择：<strong>${escapeHtml(selectedName || '')}</strong></div>
         </div>
     `;
 }
@@ -680,6 +776,16 @@ function bindCandidateSelection() {
     radios.forEach(radio => {
         radio.addEventListener('change', function() {
             latestSelectedStrainName = this.value || '';
+
+            // 同步所选候选的置信度（用于低置信度提醒）
+            const matched = latestOrbCandidates.find(c => (c.matched_strain_name || c.strain_name || '') === this.value);
+            if (matched) {
+                const effectiveScore = matched.effective_confidence;
+                const conf = Number(effectiveScore !== undefined && effectiveScore !== null
+                    ? effectiveScore
+                    : (matched.classifier_confidence || matched.match_score || matched.score || 0));
+                latestSelectedStrainConfidence = Number.isFinite(conf) ? conf : null;
+            }
 
             const allItems = document.querySelectorAll('.orb-candidate-item');
             allItems.forEach(el => {
@@ -707,6 +813,49 @@ function escapeHtml(text) {
         .replace(/'/g, '&#39;');
 }
 
+// ===== 报告提醒：输入风险、低匹配或改名时建议补充 TOF / 16S =====
+function getReportReminderState() {
+    const strainInput = document.getElementById('report-field-strain-name');
+    const editedName = (strainInput && strainInput.value.trim()) || '';
+    const lowConf = latestSelectedStrainConfidence !== null && latestSelectedStrainConfidence < 0.5;
+    // ---- 门禁已注释（演示模式）：软风险不再作为报告提醒原因 ----
+    // const inputRisk = !!latestInputRisk && ['medium', 'high'].includes(latestInputRisk.level);
+    const inputRisk = false;
+    const changed = !!editedName && !!latestSelectedStrainName && editedName !== latestSelectedStrainName.trim();
+    const tofDone = !!latestMaldiChartBase64;
+    const seqDone = !!latest16sMatchInfo;
+    return { lowConf, inputRisk, changed, editedName, tofDone, seqDone };
+}
+
+function updateReportReminder() {
+    const box = document.getElementById('report-reminder');
+    if (!box) return;
+
+    const s = getReportReminderState();
+    if (!s.lowConf && !s.inputRisk && !s.changed) {
+        box.style.display = 'none';
+        return;
+    }
+
+    const missing = [];
+    if (!s.tofDone) missing.push('MALDI-TOF 质谱');
+    if (!s.seqDone) missing.push('16S RNA 序列');
+    if (missing.length === 0) {
+        box.style.display = 'none';
+        return;
+    }
+
+    const causes = [];
+    // ---- 门禁已注释（演示模式）：不再提示"输入图片软风险需要复核" ----
+    // if (s.inputRisk) causes.push('输入图片软风险需要复核');
+    if (s.lowConf) causes.push('所选菌种相对匹配度低于 50%');
+    if (s.changed) causes.push('您在报告中修改了菌种名称');
+    const why = causes.join('，且');
+
+    box.innerHTML = '⚠️ ' + why + '，建议补充 <strong>' + missing.join('</strong> 和 <strong>') + '</strong> 数据以提高鉴定可靠性（提醒仅供参考，不影响录入）';
+    box.style.display = 'block';
+}
+
 // ===== 全局事件处理 =====
 function initReportActions() {
     const viewBtn = document.getElementById('view-report-btn');
@@ -720,16 +869,19 @@ function initReportActions() {
 
     viewBtn.addEventListener('click', function() {
         const imageInput = document.getElementById('image-input');
-        const maldiInput = document.getElementById('maldi-input');
         const sampleCode = document.getElementById('sample-code');
         const collectDate = document.getElementById('collect-date');
         const fullLocation = document.getElementById('full_location');
 
         const imageFile = imageInput && imageInput.files ? imageInput.files[0] : null;
-        const maldiFile = (maldiInput && maldiInput.files && maldiInput.files[0]) || latestMaldiFile;
 
         if (!imageFile) {
             showError('请先上传样本图片');
+            return;
+        }
+
+        if (latestInputAccepted === false) {
+            showError('当前图片未通过输入有效性检查，无法生成菌种报告');
             return;
         }
 
@@ -739,9 +891,45 @@ function initReportActions() {
         }
 
         const imageUrl = URL.createObjectURL(imageFile);
-        const maldiUrl = maldiFile ? URL.createObjectURL(maldiFile) : '';
+        const maldiUrl = latestMaldiChartBase64 ? ('data:image/png;base64,' + latestMaldiChartBase64) : '';
+        const rnaSequence = latest16sQuerySequence;
+        const rnaMatch = latest16sMatchInfo;
+        const rnaSimilarity = rnaMatch ? Number(rnaMatch.similarity || 0) * 100 : 0;
+        const rnaReportHtml = rnaMatch
+            ? `
+                <div class="report-item report-item-full">
+                    <div class="report-item-label">16S RNA 匹配结果</div>
+                    <div class="report-16s-card">
+                        <div class="report-16s-primary">
+                            <div>
+                                <strong>${escapeHtml(rnaMatch.strain_name || '未知菌种')}</strong>
+                                <span>${escapeHtml(rnaMatch.scientific_name || '-')}</span>
+                            </div>
+                            <em>${rnaSimilarity.toFixed(2)}%</em>
+                        </div>
+                        <dl class="report-16s-metrics">
+                            <div><dt>最长匹配</dt><dd>${Number(rnaMatch.match_length || 0)} bp</dd></div>
+                            <div><dt>查询长度</dt><dd>${Number(rnaMatch.query_length || rnaSequence.length || 0)} bp</dd></div>
+                            <div><dt>参考长度</dt><dd>${Number(rnaMatch.ref_length || 0)} bp</dd></div>
+                        </dl>
+                        ${rnaSequence ? `
+                            <div class="report-16s-sequence-wrap">
+                                <span>本次查询序列</span>
+                                <pre class="report-16s-sequence">${escapeHtml(rnaSequence)}</pre>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `
+            : `
+                <div class="report-item report-item-full">
+                    <div class="report-item-label">16S RNA 匹配结果</div>
+                    <div class="report-item-value">未进行 16S RNA 序列匹配</div>
+                </div>
+            `;
 
         reportContent.innerHTML = `
+            <div class="report-reminder" id="report-reminder" style="display: none; background: #fff8e1; border-left: 4px solid #f0ad4e; padding: 10px 12px; margin-bottom: 14px; color: #8a6d3b; font-size: 13px; border-radius: 4px; line-height: 1.6;"></div>
             <div class="report-item">
                 <div class="report-item-label">样品编号（可编辑）</div>
                 <input class="report-edit-input" id="report-field-sample-code" type="text" value="${(sampleCode && sampleCode.value.trim()) || ''}" placeholder="请输入样品编号">
@@ -759,8 +947,8 @@ function initReportActions() {
                 <input class="report-edit-input" id="report-field-strain-name" type="text" value="${latestSelectedStrainName}" placeholder="请输入菌种名称">
             </div>
             <div class="report-item report-item-full">
-                <div class="report-item-label">培养皿预处理、YOLO框选与HwishAI识别结论（可编辑）</div>
-                <textarea class="report-edit-textarea" id="report-field-yolo-result" placeholder="请输入或修改分析结论">${latestDetectionSummary || ''}</textarea>
+                <div class="report-item-label">HwishAI识别与软风险评估结论（可编辑）</div>
+                <textarea class="report-edit-textarea" id="report-field-detection-result" placeholder="请输入或修改分析结论">${latestDetectionSummary || ''}</textarea>
             </div>
             <div class="report-item">
                 <div class="report-item-label">样本图片</div>
@@ -768,11 +956,19 @@ function initReportActions() {
             </div>
             <div class="report-item">
                 <div class="report-item-label">MALDI-TOF图谱</div>
-                ${maldiUrl ? `<img class="report-thumb" src="${maldiUrl}" alt="MALDI图谱">` : '<div class="report-item-value">未上传</div>'}
+                ${maldiUrl ? `<img class="report-thumb" src="${maldiUrl}" alt="MALDI图谱">` : '<div class="report-item-value">未生成质谱图</div>'}
             </div>
+            ${rnaReportHtml}
         `;
 
         modal.style.display = 'flex';
+
+        // 低置信度/改名提醒：监听菌种名称编辑并初始化提醒状态
+        const strainNameEdit = document.getElementById('report-field-strain-name');
+        if (strainNameEdit) {
+            strainNameEdit.addEventListener('input', updateReportReminder);
+        }
+        updateReportReminder();
     });
 
     if (closeBtn) {
@@ -790,10 +986,6 @@ function initReportActions() {
     if (saveBtn) {
         saveBtn.addEventListener('click', function() {
             const imageInput = document.getElementById('image-input');
-            const maldiInput = document.getElementById('maldi-input');
-            const sampleCode = document.getElementById('sample-code');
-            const collectDate = document.getElementById('collect-date');
-            const fullLocation = document.getElementById('full_location');
 
             const imageFile = imageInput && imageInput.files ? imageInput.files[0] : null;
             if (!imageFile) {
@@ -805,13 +997,18 @@ function initReportActions() {
             const collectDateInput = document.getElementById('report-field-collect-date');
             const sourceLocationInput = document.getElementById('report-field-source-location');
             const strainNameInput = document.getElementById('report-field-strain-name');
-            const yoloResultInput = document.getElementById('report-field-yolo-result');
+            const detectionResultInput = document.getElementById('report-field-detection-result');
 
             const editedSampleCode = (sampleCodeInput && sampleCodeInput.value.trim()) || '';
             const editedCollectDate = (collectDateInput && collectDateInput.value) || '';
             const editedSourceLocation = (sourceLocationInput && sourceLocationInput.value.trim()) || '';
             const editedStrainName = (strainNameInput && strainNameInput.value.trim()) || '';
-            const editedYoloResult = (yoloResultInput && yoloResultInput.value.trim()) || '';
+            const editedDetectionResult = (detectionResultInput && detectionResultInput.value.trim()) || '';
+
+            if (!editedSampleCode) {
+                showError('请填写样品编号');
+                return;
+            }
 
             if (!editedStrainName) {
                 showError('请填写菌种名称');
@@ -823,34 +1020,67 @@ function initReportActions() {
             formData.append('collect_date', editedCollectDate);
             formData.append('source_location', editedSourceLocation);
             formData.append('strain_name', editedStrainName);
-            formData.append('detection_result', editedYoloResult);
+            formData.append('detection_result', editedDetectionResult);
             formData.append('image', imageFile);
 
-            const maldiFile = (maldiInput && maldiInput.files && maldiInput.files[0]) || latestMaldiFile;
-            if (maldiFile) {
-                formData.append('maldi_image', maldiFile);
+            if (latestMaldiChartBase64) {
+                formData.append('maldi_image', base64ToFile(latestMaldiChartBase64, 'maldi_chart.png'));
             }
 
-            setButtonState(saveBtn, true, '录入中...');
-            fetch('/api/save_detection_report', {
-                method: 'POST',
-                body: formData
-            })
+            const doSave = function() {
+                setButtonState(saveBtn, true, '录入中...');
+                fetch('/api/save_detection_report', {
+                    method: 'POST',
+                    body: formData
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.success) {
+                            throw new Error(data.message || '录入失败');
+                        }
+                        const remindState = getReportReminderState();
+                        const remindText = ((remindState.lowConf || remindState.inputRisk || remindState.changed) && (!remindState.tofDone || !remindState.seqDone))
+                            ? '，建议补充 TOF 与 16S 序列数据'
+                            : '';
+                        if (data.action === 'updated') {
+                            showSuccess('已覆盖原记录并保存最新结果（编号：' + (editedSampleCode || '未填写') + '）' + remindText);
+                        } else {
+                            showSuccess('新记录已录入菌种数据库' + remindText);
+                        }
+                        latestSelectedStrainName = editedStrainName;
+                        latestDetectionSummary = editedDetectionResult;
+                        modal.style.display = 'none';
+                    })
+                    .catch(error => {
+                        showError(error.message || '录入失败');
+                    })
+                    .finally(() => {
+                        setButtonState(saveBtn, false, '录入菌种数据库');
+                    });
+            };
+
+            // 录入前检查编号是否已存在，存在则请用户确认后再覆盖
+            fetch('/api/check_sample_code?sample_code=' + encodeURIComponent(editedSampleCode))
                 .then(response => response.json())
-                .then(data => {
-                    if (!data.success) {
-                        throw new Error(data.message || '录入失败');
+                .then(check => {
+                    if (check && check.success && check.exists) {
+                        const e = check.existing || {};
+                        const ok = window.confirm(
+                            '样品编号 ' + editedSampleCode + ' 已存在以下记录：\n\n' +
+                            '菌种名称：' + (e.strain_name || '-') + '\n' +
+                            '采集日期：' + (e.collect_date || '-') + '\n' +
+                            '来源位置：' + (e.location || '-') + '\n' +
+                            '上次检测：' + (e.last_detect_time || '-') + '\n\n' +
+                            '覆盖后，原记录的菌种名称/采集日期/来源将被本次结果取代，且无法恢复。是否继续覆盖？'
+                        );
+                        if (!ok) {
+                            return;
+                        }
                     }
-                    showSuccess('报告已录入菌种数据库');
-                    latestSelectedStrainName = editedStrainName;
-                    latestDetectionSummary = editedYoloResult;
-                    modal.style.display = 'none';
+                    doSave();
                 })
-                .catch(error => {
-                    showError(error.message || '录入失败');
-                })
-                .finally(() => {
-                    setButtonState(saveBtn, false, '录入菌种数据库');
+                .catch(() => {
+                    doSave();
                 });
         });
     }
@@ -858,7 +1088,6 @@ function initReportActions() {
     if (exportPdfBtn) {
         exportPdfBtn.addEventListener('click', function() {
             const imageInput = document.getElementById('image-input');
-            const maldiInput = document.getElementById('maldi-input');
 
             const imageFile = imageInput && imageInput.files ? imageInput.files[0] : null;
             if (!imageFile) {
@@ -870,26 +1099,27 @@ function initReportActions() {
             const collectDateInput = document.getElementById('report-field-collect-date');
             const sourceLocationInput = document.getElementById('report-field-source-location');
             const strainNameInput = document.getElementById('report-field-strain-name');
-            const yoloResultInput = document.getElementById('report-field-yolo-result');
+            const detectionResultInput = document.getElementById('report-field-detection-result');
 
             const editedSampleCode = (sampleCodeInput && sampleCodeInput.value.trim()) || '';
             const editedCollectDate = (collectDateInput && collectDateInput.value) || '';
             const editedSourceLocation = (sourceLocationInput && sourceLocationInput.value.trim()) || '';
             const editedStrainName = (strainNameInput && strainNameInput.value.trim()) || '';
-            const editedLlmResult = (llmResultInput && llmResultInput.value.trim()) || '';
 
             const formData = new FormData();
             formData.append('sample_code', editedSampleCode);
             formData.append('collect_date', editedCollectDate);
             formData.append('source_location', editedSourceLocation);
             formData.append('strain_name', editedStrainName);
-            formData.append('detection_result', (yoloResultInput && yoloResultInput.value.trim()) || '');
+            formData.append('detection_result', (detectionResultInput && detectionResultInput.value.trim()) || '');
             formData.append('image', imageFile);
 
-            const maldiFile = (maldiInput && maldiInput.files && maldiInput.files[0]) || latestMaldiFile;
-            if (maldiFile) {
-                formData.append('maldi_image', maldiFile);
+            if (latestMaldiChartBase64) {
+                formData.append('maldi_image', base64ToFile(latestMaldiChartBase64, 'maldi_chart.png'));
             }
+            formData.append('maldi_candidates', JSON.stringify(latestMaldiCandidates));
+            formData.append('sequence_16s', latest16sQuerySequence || '');
+            formData.append('result_16s', JSON.stringify(latest16sMatchInfo || null));
 
             setButtonState(exportPdfBtn, true, '导出中...');
             fetch('/api/export_detection_report_pdf', {
@@ -977,6 +1207,17 @@ function initGlobalEvents() {
 }
 
 // ===== 工具函数 =====
+function base64ToFile(base64, filename) {
+    // 将 base64（不含 data: 前缀）转为 File 对象，用于上传质谱图 PNG
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new File([byteArray], filename, { type: 'image/png' });
+}
+
 function showError(message) {
     // 移除现有的错误提示
     const existingToast = document.querySelector('.error-toast');
@@ -1130,7 +1371,9 @@ function updateDetectedPreview(imageUrl, imageSelection) {
         placeholder.style.display = 'none';
         if (confidence) {
             const score = Number(imageSelection && imageSelection.confidence);
-            confidence.textContent = Number.isFinite(score) ? `置信度 ${(score * 100).toFixed(2)}%` : '';
+            confidence.textContent = Number.isFinite(score)
+                ? `模型相对匹配度 ${(score * 100).toFixed(2)}%`
+                : '';
         }
     } else {
         detectedImage.removeAttribute('src');

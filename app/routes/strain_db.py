@@ -50,8 +50,11 @@ def index():
     except ValueError:
         pass
 
-    # 分页查询
-    pagination = query.order_by(Sample.id.desc()).paginate(
+    # 分页查询（按录入/检测时间倒序，时间新的在前，id 倒序作次级排序）
+    pagination = query.order_by(
+        Sample.last_detect_time.desc(),
+        Sample.id.desc()
+    ).paginate(
         page=page, per_page=per_page, error_out=False
     )
 

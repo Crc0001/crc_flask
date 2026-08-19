@@ -2,7 +2,7 @@
 {% block title %}菌种鉴定{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/ai_detection.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ai_detection.css', v='20260817-input-gate') }}">
 {% endblock %}
 
 {% block content %}
@@ -121,11 +121,11 @@
 
             <div class="card llm-card">
                 <div class="card-header smart-detect-header">
-                    <h4>菌落框选与 HwishAI 识别</h4>
+                    <h4>图片有效性检查与 HwishAI 识别</h4>
                     <button type="button" class="btn-purple" id="orb-detect-btn">检测</button>
                 </div>
                 <div class="card-content llm-content">
-                    <div class="result-area" id="orb-result">请先上传样本图片，然后点击“检测”查看菌落匹配结果。</div>
+                    <div class="result-area" id="orb-result">请先上传样本图片，然后点击“检测”查看菌种候选结果。</div>
                 </div>
             </div>
         </div>
@@ -241,5 +241,5 @@
     </form>
 
 <!-- 引入外部JavaScript文件 -->
-<script src="{{ url_for('static', filename='js/ai_detection.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ai_detection.js', v='20260817-pdf-details-1') }}"></script>
 {% endblock %}
