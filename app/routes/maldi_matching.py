@@ -1,30 +1,65 @@
 """
-MALDI-TOF 质谱匹配路由
+MALDI-TOF 质谱匹配 API
 
-提供质谱匹配和参考谱管理的 API 接口
+只保留 API：质谱峰匹配 / 16S 序列匹配 / 参考谱管理。
+页面入口已并入"菌种检测"页（第三/四行面板），不再提供独立页面；
+参考谱批量维护可用仓库根目录的 import_maldi_data.py。
 """
 
-from flask import Blueprint, request, jsonify, current_app, render_template
-from werkzeug.utils import secure_filename
+from flask import Blueprint, request, jsonify, current_app
+from flask_login import current_user
+from werkzeug.exceptions import HTTPException
 from app.extensions import db
 from app.models.maldi_reference import MaldiReference
 from app.models.strain import Strain, Strain16S
+from app.models.user import audit
 from app.services.maldi_matching import (
     parse_maldi_txt_from_bytes,
     match_query_against_references,
     normalize_peaks
 )
 from app.services.spectrum_plot import generate_comparison_plot
-from datetime import datetime
 from difflib import SequenceMatcher
+import time
 
 maldi_matching_bp = Blueprint('maldi_matching', __name__)
 
+# MALDI TXT 单文件大小上限（质谱峰文件正常只有几十 KB）
+_MAX_MALDI_TXT_BYTES = 2 * 1024 * 1024
 
-@maldi_matching_bp.route('/maldi_matching', methods=['GET'])
-def maldi_matching_page():
-    """质谱匹配页面"""
-    return render_template('maldi_matching.html')
+# 16S 查询序列长度上限（SequenceMatcher 为 O(n·m)，超长序列 = 算法级 DoS）
+_MAX_16S_QUERY_LENGTH = 2000
+
+# 16S 参考序列进程内缓存（60s）：避免每个请求重查+全量大写清洗
+_REF16S_CACHE = {"ts": 0.0, "data": []}
+_REF16S_TTL = 60
+
+
+def _get_16s_references():
+    now = time.monotonic()
+    if _REF16S_CACHE["data"] and now - _REF16S_CACHE["ts"] < _REF16S_TTL:
+        return _REF16S_CACHE["data"]
+    references = []
+    for ref in Strain16S.query.join(Strain).filter(
+        Strain.is_active == True,
+        Strain16S.strain_16s.isnot(None),
+        Strain16S.strain_16s != ''
+    ).all():
+        references.append({
+            'reference_id': ref.id,
+            'strain_id': ref.strain_id,
+            'strain_name': ref.strain.name or '未知菌种',
+            'scientific_name': ref.strain.scientific_name or '-',
+            'sequence': ''.join(ref.strain_16s.split()).upper(),
+        })
+    _REF16S_CACHE["ts"] = now
+    _REF16S_CACHE["data"] = references
+    return references
+
+
+def _invalidate_16s_cache():
+    _REF16S_CACHE["ts"] = 0.0
+    _REF16S_CACHE["data"] = []
 
 
 @maldi_matching_bp.route('/api/maldi/match', methods=['POST'])
@@ -88,6 +123,11 @@ def maldi_match():
 
         # 读取文件内容
         file_bytes = file.read()
+        if len(file_bytes) > _MAX_MALDI_TXT_BYTES:
+            return jsonify({
+                'success': False,
+                'message': 'TXT 文件过大（单文件上限 2MB）'
+            })
 
         # 解析文件
         parsed_data = parse_maldi_txt_from_bytes(file_bytes)
@@ -165,11 +205,13 @@ def maldi_match():
             'comparison_plot': comparison_plot_base64  # base64 编码的 PNG 图片
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"质谱匹配失败: {str(e)}")
+        current_app.logger.error("质谱匹配失败: %s", e, exc_info=True)
         return jsonify({
             'success': False,
-            'message': f'匹配失败: {str(e)}'
+            'message': '匹配失败，请稍后重试'
         })
 
 
@@ -194,6 +236,12 @@ def add_reference():
             }
         }
     """
+    # 参考谱维护仅限管理员角色（操作员只读匹配）
+    if not current_user.is_admin:
+        return jsonify({
+            'success': False,
+            'message': '参考谱维护仅限管理员操作'
+        }), 403
     try:
         # 检查文件
         if 'file' not in request.files:
@@ -245,6 +293,11 @@ def add_reference():
 
         # 读取并解析文件
         file_bytes = file.read()
+        if len(file_bytes) > _MAX_MALDI_TXT_BYTES:
+            return jsonify({
+                'success': False,
+                'message': 'TXT 文件过大（单文件上限 2MB）'
+            })
         parsed_data = parse_maldi_txt_from_bytes(file_bytes)
 
         if not parsed_data['peaks']:
@@ -267,6 +320,13 @@ def add_reference():
 
         db.session.add(reference)
         db.session.commit()
+        audit(
+            "maldi_reference_add",
+            f"添加质谱参考谱：菌种 {strain.name or strain.scientific_name or strain_id} "
+            f"（sample_id={reference.sample_id}，峰数 {reference.peak_count}）",
+            username=current_user.username,
+            ip=request.remote_addr,
+        )
 
         return jsonify({
             'success': True,
@@ -280,12 +340,14 @@ def add_reference():
             }
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"添加参考谱失败: {str(e)}")
+        current_app.logger.error("添加参考谱失败: %s", e, exc_info=True)
         return jsonify({
             'success': False,
-            'message': f'添加失败: {str(e)}'
+            'message': '添加失败，请稍后重试'
         })
 
 
@@ -335,11 +397,13 @@ def list_references():
             'references': [ref.to_dict() for ref in references]
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"获取参考谱列表失败: {str(e)}")
+        current_app.logger.error("获取参考谱列表失败: %s", e, exc_info=True)
         return jsonify({
             'success': False,
-            'message': f'获取列表失败: {str(e)}'
+            'message': '获取列表失败，请稍后重试'
         })
 
 
@@ -354,6 +418,12 @@ def delete_reference(ref_id):
             "message": "删除成功"
         }
     """
+    # 参考谱维护仅限管理员角色（操作员只读匹配）
+    if not current_user.is_admin:
+        return jsonify({
+            'success': False,
+            'message': '参考谱维护仅限管理员操作'
+        }), 403
     try:
         reference = MaldiReference.query.get(ref_id)
 
@@ -363,20 +433,29 @@ def delete_reference(ref_id):
                 'message': f'参考谱 ID {ref_id} 不存在'
             })
 
+        ref_label = f"{reference.strain.name if reference.strain else '-'}（sample_id={reference.sample_id}）"
         db.session.delete(reference)
         db.session.commit()
+        audit(
+            "maldi_reference_delete",
+            f"删除质谱参考谱 #{ref_id}：{ref_label}",
+            username=current_user.username,
+            ip=request.remote_addr,
+        )
 
         return jsonify({
             'success': True,
             'message': '删除成功'
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"删除参考谱失败: {str(e)}")
+        current_app.logger.error("删除参考谱失败: %s", e, exc_info=True)
         return jsonify({
             'success': False,
-            'message': f'删除失败: {str(e)}'
+            'message': '删除失败，请稍后重试'
         })
 
 
@@ -413,11 +492,13 @@ def get_strains():
             ]
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"获取菌种列表失败: {str(e)}")
+        current_app.logger.error("获取菌种列表失败: %s", e, exc_info=True)
         return jsonify({
             'success': False,
-            'message': f'获取菌种列表失败: {str(e)}'
+            'message': '获取菌种列表失败，请稍后重试'
         })
 
 
@@ -474,15 +555,17 @@ def match_16s():
                 'message': '序列长度过短（至少需要50个碱基）'
             })
 
+        if len(sequence) > _MAX_16S_QUERY_LENGTH:
+            return jsonify({
+                'success': False,
+                'message': f'序列过长（上限 {_MAX_16S_QUERY_LENGTH} 个碱基）'
+            })
+
         # 获取参数
         top_k = int(request.form.get('top_k', 5) if not request.is_json else request.get_json().get('top_k', 5))
 
-        # 查询所有 16S 参考序列
-        references = Strain16S.query.join(Strain).filter(
-            Strain.is_active == True,
-            Strain16S.strain_16s.isnot(None),
-            Strain16S.strain_16s != ''
-        ).all()
+        # 查询 16S 参考序列（进程内缓存，避免每请求全量清洗）
+        references = _get_16s_references()
 
         if not references:
             return jsonify({
@@ -493,7 +576,7 @@ def match_16s():
         # 计算相似度
         candidates = []
         for ref in references:
-            ref_sequence = ''.join(ref.strain_16s.split()).upper()
+            ref_sequence = ref['sequence']
 
             # 使用 SequenceMatcher 计算相似度
             matcher = SequenceMatcher(None, sequence, ref_sequence)
@@ -503,14 +586,14 @@ def match_16s():
             match = matcher.find_longest_match(0, len(sequence), 0, len(ref_sequence))
 
             candidates.append({
-                'strain_id': ref.strain_id,
-                'strain_name': ref.strain.name or '未知菌种',
-                'scientific_name': ref.strain.scientific_name or '-',
+                'strain_id': ref['strain_id'],
+                'strain_name': ref['strain_name'],
+                'scientific_name': ref['scientific_name'],
                 'similarity': similarity,
                 'match_length': match.size,
                 'query_length': len(sequence),
                 'ref_length': len(ref_sequence),
-                'reference_id': ref.id
+                'reference_id': ref['reference_id']
             })
 
         # 按相似度排序
@@ -534,9 +617,11 @@ def match_16s():
             }
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"16S 匹配失败: {str(e)}")
+        current_app.logger.error("16S 匹配失败: %s", e, exc_info=True)
         return jsonify({
             'success': False,
-            'message': f'匹配失败: {str(e)}'
+            'message': '匹配失败，请稍后重试'
         })

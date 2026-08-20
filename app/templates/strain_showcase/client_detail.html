@@ -1,0 +1,101 @@
+{% extends "layout.html" %}
+{% block title %}菌种知识库详情{% endblock %}
+
+{% block content %}
+<div class="kb-detail-page">
+    <a href="{{ url_for('strain_showcase.index') }}" class="kb-back">← 返回知识库列表</a>
+
+    <div class="kb-detail-head">
+        <h2>{{ record.species_name_zh or record.species_name or record.full_scientific_name or '未知菌种' }}</h2>
+        <div class="kb-detail-latin">{{ record.species_name or record.full_scientific_name or '' }}</div>
+        <div class="kb-detail-meta">
+            {% if record.type_strain == 'yes' %}<span class="kb-tag">模式菌株</span>{% endif %}
+            <span>BacDive ID: {{ record.bacdive_id or '-' }}</span>
+            {% if record.dsm_number %}<span>DSM: {{ record.dsm_number }}</span>{% endif %}
+            {% if record.strain_designation %}<span>菌株编号: {{ record.strain_designation }}</span>{% endif %}
+        </div>
+    </div>
+
+    {% if record.taxonomy %}
+    <div class="kb-section">
+        <h4>分类学地位</h4>
+        <table class="kb-tax-table">
+            {% for label, value in record.taxonomy %}
+            <tr><th>{{ label }}</th><td>{{ value or '-' }}</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+    {% endif %}
+
+    {% if record.description %}
+    <div class="kb-section">
+        <h4>描述</h4>
+        <p class="kb-text">{{ record.description }}</p>
+    </div>
+    {% endif %}
+
+    {% if record.keywords %}
+    <div class="kb-section">
+        <h4>关键词</h4>
+        <p class="kb-text">{{ record.keywords }}</p>
+    </div>
+    {% endif %}
+
+    {% for title, value in record.data_sections %}
+        {% if value %}
+        <div class="kb-section">
+            <h4>{{ title }}</h4>
+            {% if value is string %}
+                <p class="kb-text">{{ value }}</p>
+            {% else %}
+                <pre class="kb-json">{{ value | tojson(indent=2) }}</pre>
+            {% endif %}
+        </div>
+        {% endif %}
+    {% endfor %}
+
+    {% if record.strain_history %}
+    <div class="kb-section">
+        <h4>菌株历史</h4>
+        {% if record.strain_history is string %}
+            <p class="kb-text">{{ record.strain_history }}</p>
+        {% else %}
+            <pre class="kb-json">{{ record.strain_history | tojson(indent=2) }}</pre>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if record.silva_sequences %}
+    <div class="kb-section">
+        <h4>相关 SILVA 序列</h4>
+        <table class="kb-tax-table">
+            <tr><th>物种名</th><th>Accession</th><th>序列长度</th></tr>
+            {% for seq in record.silva_sequences %}
+            <tr>
+                <td>{{ seq.organism_name or '-' }}</td>
+                <td>{{ seq.accession or '-' }}</td>
+                <td>{{ seq.sequence_length or '-' }} bp</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .kb-detail-page { max-width: 960px; }
+    .kb-back { display: inline-block; margin-bottom: 12px; font-size: 13px; color: #2471a3; text-decoration: none; }
+    .kb-detail-head { background: #fff; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .kb-detail-head h2 { margin: 0 0 4px; }
+    .kb-detail-latin { font-style: italic; color: #57606f; font-size: 14px; margin-bottom: 8px; }
+    .kb-detail-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #7f8c8d; }
+    .kb-tag { background: #eaf2f8; color: #2471a3; border-radius: 4px; padding: 2px 8px; }
+    .kb-section { background: #fff; border-radius: 8px; padding: 14px 20px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .kb-section h4 { margin: 0 0 10px; color: #1e272e; }
+    .kb-text { font-size: 13px; line-height: 1.7; color: #2c3e50; white-space: pre-wrap; }
+    .kb-json { background: #f8f9fa; border-radius: 6px; padding: 12px; font-size: 12px; overflow-x: auto; }
+    .kb-tax-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .kb-tax-table th { width: 140px; text-align: left; color: #57606f; font-weight: 600; }
+    .kb-tax-table th, .kb-tax-table td { border-bottom: 1px solid #f0f0f0; padding: 8px 6px; vertical-align: top; }
+</style>
+{% endblock %}

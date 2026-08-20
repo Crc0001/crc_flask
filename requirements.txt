@@ -1,10 +1,21 @@
-Flask>=3.1.2
-Werkzeug>=3.1.5
-opencv-python>=4.12.0.88
-ultralytics>=8.3.252
-Flask-Migrate>=4.1.0
-reportlab>=4.2.0
-requests>=2.32.0
-open_clip_torch>=3.0
-xgboost>=2.0
-scikit-learn>=1.0
+# ---- vendor（我方模型机）完整依赖（锁定精确版本，保证可复现/可审计） ----
+Flask==3.1.2
+Werkzeug==3.1.5
+Flask-SQLAlchemy==3.1.1
+Flask-Login==0.6.3
+Flask-Migrate==4.1.0
+PyMySQL==1.1.2
+cryptography==50.0.0
+requests==2.32.5
+pandas==2.3.3
+openpyxl==3.1.5
+reportlab==4.4.10
+waitress==3.0.2
+opencv-python==4.12.0.88
+ultralytics==8.3.252
+open_clip_torch==3.3.0
+xgboost==3.2.0
+scikit-learn==1.7.2
+# 按机器显卡单独安装（装 CPU 版即可，DirectML 另装 torch-directml）：
+# torch==2.x（版本与 DirectML 插件匹配后自行锁定）
+# 开发/测试（不入部署包）：pip install pytest 后运行 tests\run_all_tests.bat

@@ -1,11 +1,21 @@
 import json
 import re
+from urllib.parse import urlencode
 
-from flask import Blueprint, abort, render_template, request, url_for
+import requests
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    render_template,
+    request,
+    url_for,
+)
 from sqlalchemy import func, or_
 from sqlalchemy.dialects.mysql import match
 from sqlalchemy.orm import load_only, selectinload
 
+from app.config import APP_ROLE
 from app.extensions import db
 from app.models import BacdiveRecord, BacdiveStrainMatch, SilvaSsuSequence, Strain, StrainMedium
 
@@ -169,172 +179,250 @@ def _find_silva_sequences(record, limit=8):
     )
 
 
+if APP_ROLE == "client":
+    # ------------------------------------------------------------------
+    # client 模式：知识库数据在我方本地，页面走代理（数据不落客户库）
+    # ------------------------------------------------------------------
 
-
-@strain_showcase_bp.route("/", methods=["GET"])
-def index():
-    query_text = request.args.get("q", "").strip()
-    domain = request.args.get("domain", "").strip()
-    type_strain = request.args.get("type_strain", "").strip().lower()
-    genus = request.args.get("genus", "").strip()
-    environment_only = request.args.get("environment_only") == "1"
-    page = request.args.get("page", 1, type=int)
-    per_page = 24
-
-    query = BacdiveRecord.query
-
-    if domain:
-        query = query.filter(BacdiveRecord.domain_name == domain)
-    if type_strain in {"yes", "no"}:
-        query = query.filter(BacdiveRecord.type_strain == type_strain)
-    if genus:
-        query = query.filter(BacdiveRecord.genus_name.like(f"%{genus}%"))
-    if environment_only:
-        query = query.join(BacdiveStrainMatch).distinct()
-
-    query_without_search = query
-
-    if query_text:
-        pagination = None
-        for candidate in _search_candidates(query_without_search, query_text):
-            pagination = _paginate_records(
-                candidate.order_by(BacdiveRecord.bacdive_id.asc()), page, per_page
+    def _knowledge_api(path, params=None):
+        base_url = (current_app.config.get("HWISHAI_API_BASE_URL") or "").rstrip("/")
+        machine_token = current_app.config.get("HWISHAI_API_TOKEN") or ""
+        if not base_url or not machine_token:
+            return None, "服务端未配置我方服务地址（HWISHAI_API_BASE_URL / HWISHAI_API_TOKEN）"
+        read_timeout = int(current_app.config.get("HWISHAI_API_TIMEOUT", 300))
+        try:
+            resp = requests.get(
+                f"{base_url}{path}",
+                params=params or {},
+                headers={"Authorization": f"Bearer {machine_token}"},
+                timeout=(5, read_timeout),
             )
-            if pagination.total:
-                break
-        if pagination is None:
-            pagination = _paginate_records(
-                query_without_search.order_by(BacdiveRecord.bacdive_id.asc()),
-                page,
-                per_page,
-            )
-    else:
-        pagination = _paginate_records(
-            query_without_search.order_by(BacdiveRecord.bacdive_id.asc()), page, per_page
+        except requests.RequestException as exc:
+            current_app.logger.warning("知识库代理失败（%s%s）: %s", base_url, path, exc)
+            return None, "无法连接我方知识库服务，请稍后重试"
+        if resp.status_code == 401:
+            return None, "我方知识库服务鉴权失败（机器令牌无效）"
+        try:
+            payload = resp.json()
+        except ValueError:
+            current_app.logger.warning("知识库服务返回非 JSON（%s%s）", base_url, path)
+            return None, "我方知识库服务返回内容无法解析"
+        if not payload.get("success"):
+            return None, payload.get("message") or "知识库查询失败"
+        return payload, None
+
+    @strain_showcase_bp.route("/", methods=["GET"])
+    def index():
+        payload, error = _knowledge_api(
+            "/api/v1/knowledge/search",
+            {key: value for key, value in request.args.items()},
+        )
+        if error:
+            return render_template("strain_showcase/client_error.html", message=error)
+
+        records = payload.get("records") or []
+        page = int(payload.get("page") or 1)
+        pages = int(payload.get("pages") or 1)
+        total = int(payload.get("total") or 0)
+        page_start = max(1, page - 2)
+        page_end = min(pages, page + 2)
+        query_pairs = [
+            (key, value) for key, value in request.args.items() if key != "page"
+        ]
+        query_string = ("&" + urlencode(query_pairs)) if query_pairs else ""
+        return render_template(
+            "strain_showcase/client_index.html",
+            records=records,
+            page=page,
+            pages=pages,
+            total=total,
+            page_range=range(page_start, page_end + 1),
+            query_string=query_string,
+            filters=request.args,
         )
 
-    record_ids = [record.id for record in pagination.items]
-    environment_by_record = {}
-    if record_ids:
-        matches = (
-            BacdiveStrainMatch.query.options(selectinload(BacdiveStrainMatch.strain))
-            .filter(BacdiveStrainMatch.bacdive_record_id.in_(record_ids))
-            .all()
-        )
-        for match in matches:
-            if match.strain and match.strain.is_active:
-                environment_by_record.setdefault(match.bacdive_record_id, match.strain)
-
-    page_range, total_pages, start_page, end_page = _page_window(pagination)
-    stats = {
-        "records": db.session.query(func.count(BacdiveRecord.id)).scalar() or 0,
-        "type_strains": (
-            db.session.query(func.count(BacdiveRecord.id))
-            .filter(BacdiveRecord.type_strain == "yes")
-            .scalar()
-            or 0
-        ),
-        "environment_records": (
-            db.session.query(func.count(func.distinct(BacdiveStrainMatch.bacdive_record_id))).scalar()
-            or 0
-        ),
-    }
-
-    return render_template(
-        "strain_showcase/index.html",
-        records=pagination.items,
-        pagination=pagination,
-        environment_by_record=environment_by_record,
-        stats=stats,
-        filters={
-            "q": query_text,
-            "domain": domain,
-            "type_strain": type_strain,
-            "genus": genus,
-            "environment_only": environment_only,
-        },
-        page_range=page_range,
-        total_pages=total_pages,
-        start_page=start_page,
-        end_page=end_page,
-    )
-
-
-@strain_showcase_bp.route("/<int:record_id>")
-def detail(record_id):
-    record = BacdiveRecord.query.options(
-        selectinload(BacdiveRecord.environment_matches).selectinload(BacdiveStrainMatch.strain)
-    ).filter_by(id=record_id).first_or_404()
-
-    environment_strains = []
-    seen_ids = set()
-    for match in record.environment_matches:
-        strain = match.strain
-        if strain and strain.is_active and strain.id not in seen_ids:
-            environment_strains.append(strain)
-            seen_ids.add(strain.id)
-
-    if environment_strains:
-        strain_ids = [strain.id for strain in environment_strains]
-        environment_strains = (
-            Strain.query.options(
-                selectinload(Strain.growth_cycles),
-                selectinload(Strain.media_links).selectinload(StrainMedium.medium),
-                selectinload(Strain.morphology),
-                selectinload(Strain.sources),
-                selectinload(Strain.strain_16s_records),
-            )
-            .filter(Strain.id.in_(strain_ids))
-            .all()
+    @strain_showcase_bp.route("/<int:record_id>")
+    def detail(record_id):
+        payload, error = _knowledge_api(f"/api/v1/knowledge/{record_id}")
+        if error:
+            return render_template("strain_showcase/client_error.html", message=error)
+        return render_template(
+            "strain_showcase/client_detail.html",
+            record=payload.get("record") or {},
         )
 
-    silva_sequences = _find_silva_sequences(record)
-
-    data_sections = [
-        ("培养基", _clean_json(record.culture_medium)),
-        ("培养温度", _clean_json(record.culture_temp)),
-        ("培养 pH", _clean_json(record.culture_ph)),
-        ("形态学", _clean_json(record.morphology)),
-        ("生理与代谢", _clean_json(record.physiology)),
-        ("分离与环境信息", _clean_json(record.isolation_info)),
-        ("安全性", _clean_json(record.safety_info)),
-        ("序列信息", _clean_json(record.sequence_info)),
-        ("文献", _clean_json(record.literature_info)),
-    ]
-
-    taxonomy = [
-        ("域", record.domain_name),
-        ("门", record.phylum_name),
-        ("纲", record.class_name),
-        ("目", record.order_name),
-        ("科", record.family_name),
-        ("属", record.genus_name),
-        ("种", record.species_name),
-    ]
-
-    return render_template(
-        "strain_showcase/detail.html",
-        record=record,
-        taxonomy=taxonomy,
-        silva_sequences=silva_sequences,
-        data_sections=data_sections,
-        strain_history=_parse_json_text(record.strain_history),
-        environment_strains=environment_strains,
-        static_image_url=_static_image_url,
-    )
-
-
-@strain_showcase_bp.route("/environment/<int:strain_id>")
-def environment_detail(strain_id):
-    strain = Strain.query.filter_by(id=strain_id, is_active=True).first()
-    if not strain:
+    @strain_showcase_bp.route("/environment/<int:strain_id>")
+    def environment_detail(strain_id):
+        # 客户库不含环境菌种数据，该入口在 client 模式不提供
         abort(404)
-    record = (
-        BacdiveRecord.query.join(BacdiveStrainMatch)
-        .filter(BacdiveStrainMatch.strain_id == strain.id)
-        .order_by(BacdiveRecord.bacdive_id)
-        .first()
-    )
-    if record:
-        return detail(record.id)
-    abort(404)
+
+else:
+    # ------------------------------------------------------------------
+    # vendor 模式：本地 BacDive 库直查（原有实现）
+    # ------------------------------------------------------------------
+
+    @strain_showcase_bp.route("/", methods=["GET"])
+    def index():
+        query_text = request.args.get("q", "").strip()
+        domain = request.args.get("domain", "").strip()
+        type_strain = request.args.get("type_strain", "").strip().lower()
+        genus = request.args.get("genus", "").strip()
+        environment_only = request.args.get("environment_only") == "1"
+        page = request.args.get("page", 1, type=int)
+        per_page = 24
+
+        query = BacdiveRecord.query
+
+        if domain:
+            query = query.filter(BacdiveRecord.domain_name == domain)
+        if type_strain in {"yes", "no"}:
+            query = query.filter(BacdiveRecord.type_strain == type_strain)
+        if genus:
+            query = query.filter(BacdiveRecord.genus_name.like(f"%{genus}%"))
+        if environment_only:
+            query = query.join(BacdiveStrainMatch).distinct()
+
+        query_without_search = query
+
+        if query_text:
+            pagination = None
+            for candidate in _search_candidates(query_without_search, query_text):
+                pagination = _paginate_records(
+                    candidate.order_by(BacdiveRecord.bacdive_id.asc()), page, per_page
+                )
+                if pagination.total:
+                    break
+            if pagination is None:
+                pagination = _paginate_records(
+                    query_without_search.order_by(BacdiveRecord.bacdive_id.asc()),
+                    page,
+                    per_page,
+                )
+        else:
+            pagination = _paginate_records(
+                query_without_search.order_by(BacdiveRecord.bacdive_id.asc()), page, per_page
+            )
+
+        record_ids = [record.id for record in pagination.items]
+        environment_by_record = {}
+        if record_ids:
+            matches = (
+                BacdiveStrainMatch.query.options(selectinload(BacdiveStrainMatch.strain))
+                .filter(BacdiveStrainMatch.bacdive_record_id.in_(record_ids))
+                .all()
+            )
+            for match in matches:
+                if match.strain and match.strain.is_active:
+                    environment_by_record.setdefault(match.bacdive_record_id, match.strain)
+
+        page_range, total_pages, start_page, end_page = _page_window(pagination)
+        stats = {
+            "records": db.session.query(func.count(BacdiveRecord.id)).scalar() or 0,
+            "type_strains": (
+                db.session.query(func.count(BacdiveRecord.id))
+                .filter(BacdiveRecord.type_strain == "yes")
+                .scalar()
+                or 0
+            ),
+            "environment_records": (
+                db.session.query(func.count(func.distinct(BacdiveStrainMatch.bacdive_record_id))).scalar()
+                or 0
+            ),
+        }
+
+        return render_template(
+            "strain_showcase/index.html",
+            records=pagination.items,
+            pagination=pagination,
+            environment_by_record=environment_by_record,
+            stats=stats,
+            filters={
+                "q": query_text,
+                "domain": domain,
+                "type_strain": type_strain,
+                "genus": genus,
+                "environment_only": environment_only,
+            },
+            page_range=page_range,
+            total_pages=total_pages,
+            start_page=start_page,
+            end_page=end_page,
+        )
+
+    @strain_showcase_bp.route("/<int:record_id>")
+    def detail(record_id):
+        record = BacdiveRecord.query.options(
+            selectinload(BacdiveRecord.environment_matches).selectinload(BacdiveStrainMatch.strain)
+        ).filter_by(id=record_id).first_or_404()
+
+        environment_strains = []
+        seen_ids = set()
+        for match in record.environment_matches:
+            strain = match.strain
+            if strain and strain.is_active and strain.id not in seen_ids:
+                environment_strains.append(strain)
+                seen_ids.add(strain.id)
+
+        if environment_strains:
+            strain_ids = [strain.id for strain in environment_strains]
+            environment_strains = (
+                Strain.query.options(
+                    selectinload(Strain.growth_cycles),
+                    selectinload(Strain.media_links).selectinload(StrainMedium.medium),
+                    selectinload(Strain.morphology),
+                    selectinload(Strain.sources),
+                    selectinload(Strain.strain_16s_records),
+                )
+                .filter(Strain.id.in_(strain_ids))
+                .all()
+            )
+
+        silva_sequences = _find_silva_sequences(record)
+
+        data_sections = [
+            ("培养基", _clean_json(record.culture_medium)),
+            ("培养温度", _clean_json(record.culture_temp)),
+            ("培养 pH", _clean_json(record.culture_ph)),
+            ("形态学", _clean_json(record.morphology)),
+            ("生理与代谢", _clean_json(record.physiology)),
+            ("分离与环境信息", _clean_json(record.isolation_info)),
+            ("安全性", _clean_json(record.safety_info)),
+            ("序列信息", _clean_json(record.sequence_info)),
+            ("文献", _clean_json(record.literature_info)),
+        ]
+
+        taxonomy = [
+            ("域", record.domain_name),
+            ("门", record.phylum_name),
+            ("纲", record.class_name),
+            ("目", record.order_name),
+            ("科", record.family_name),
+            ("属", record.genus_name),
+            ("种", record.species_name),
+        ]
+
+        return render_template(
+            "strain_showcase/detail.html",
+            record=record,
+            taxonomy=taxonomy,
+            silva_sequences=silva_sequences,
+            data_sections=data_sections,
+            strain_history=_parse_json_text(record.strain_history),
+            environment_strains=environment_strains,
+            static_image_url=_static_image_url,
+        )
+
+    @strain_showcase_bp.route("/environment/<int:strain_id>")
+    def environment_detail(strain_id):
+        strain = Strain.query.filter_by(id=strain_id, is_active=True).first()
+        if not strain:
+            abort(404)
+        record = (
+            BacdiveRecord.query.join(BacdiveStrainMatch)
+            .filter(BacdiveStrainMatch.strain_id == strain.id)
+            .order_by(BacdiveRecord.bacdive_id)
+            .first()
+        )
+        if record:
+            return detail(record.id)
+        abort(404)

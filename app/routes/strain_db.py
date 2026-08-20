@@ -1,8 +1,11 @@
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify, send_file
+from flask_login import current_user
 from app.models.sample import Sample
+from app.models.user import audit
 from app.extensions import db
 from datetime import datetime
 from io import BytesIO
+from urllib.parse import urlencode
 
 strain_db_bp = Blueprint("strain_db", __name__, url_prefix="/strain_db")
 
@@ -66,15 +69,11 @@ def index():
         .all()
     locations = [loc[0] for loc in locations if loc[0]]
 
-    # 构建查询参数字符串（用于分页链接）
+    # 构建查询参数字符串（用于分页链接，URL 编码防搜索词含 &/# 破坏链接）
     query_string = ""
-    if any(search_params.values()):
-        params = []
-        for key, value in search_params.items():
-            if value:
-                params.append(f"{key}={value}")
-        if params:
-            query_string = "&" + "&".join(params)
+    params = {key: value for key, value in search_params.items() if value}
+    if params:
+        query_string = "&" + urlencode(params)
 
     # Ajax 请求只返回表格
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
@@ -137,8 +136,18 @@ def edit(sample_id):
             except ValueError:
                 pass
 
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return jsonify({"success": False, "message": "保存失败，请稍后重试"}), 500
 
+        audit(
+            "sample_edit",
+            f"编辑样品记录：ID {sample.id}（编号 {sample.sample_code or '-'}）",
+            username=current_user.username,
+            ip=request.remote_addr,
+        )
         return jsonify({
             "success": True,
             "message": "保存成功",
@@ -157,9 +166,20 @@ def edit(sample_id):
 @strain_db_bp.route("/delete/<int:sample_id>", methods=["POST"])
 def delete(sample_id):
     sample = Sample.query.get_or_404(sample_id)
+    sample_code = sample.sample_code or "-"
     db.session.delete(sample)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({"success": False, "message": "删除失败，请稍后重试"}), 500
 
+    audit(
+        "sample_delete",
+        f"删除样品记录：ID {sample_id}（编号 {sample_code}）",
+        username=current_user.username,
+        ip=request.remote_addr,
+    )
     return jsonify({
         "success": True,
         "message": "删除成功",

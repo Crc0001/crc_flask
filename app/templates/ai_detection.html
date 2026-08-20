@@ -36,7 +36,7 @@
             </div>
 
             <div class="input-group location-group">
-                <label>采样地点</label>
+                <label>采样地点<span class="location-optional-hint" id="location-optional-hint" style="display:none; color:#95a5a6; font-weight:normal;">（分类未配置，可不填）</span></label>
                 <div class="location-dropdown-container">
                     <div class="location-levels">
                         <select id="class_general" name="class_general" required class="location-dropdown">
@@ -130,7 +130,8 @@
             </div>
         </div>
 
-        <!-- 第三行：MALDI-TOF质谱检测 -->
+        {% if config.get('APP_ROLE') == 'vendor' %}
+        <!-- 第三行：MALDI-TOF质谱检测（参考谱库在我方本地，仅 vendor 模式开放） -->
 <div class="row maldi-row">
             <div class="card maldi-chart-card">
                 <div class="card-header">
@@ -220,6 +221,7 @@
                 </div>
             </div>
         </div>
+        {% endif %}
 
         <div class="report-action-row">
             <button type="button" class="btn-primary" id="view-report-btn">📄 查看报告</button>

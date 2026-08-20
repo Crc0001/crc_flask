@@ -4,6 +4,18 @@ document.addEventListener('DOMContentLoaded', function() {
     let mainChart = null;
     let currentChartType = document.getElementById('type').value;
 
+    // 统一 HTML 转义：后端/数据库文本插入 innerHTML 前必须经过它
+    // （菌种名、采样地点等来自用户录入，是潜在的 XSS 数据源）
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // 初始化
     initPage();
 
@@ -436,7 +448,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (legendContainer) {
                 legendContainer.innerHTML = `
                     <div class="empty-legend">
-                        <i class="far fa-chart-bar"></i>
+                        📊
                         <p>暂无数据</p>
                     </div>
                 `;
@@ -461,12 +473,13 @@ document.addEventListener('DOMContentLoaded', function() {
         data.datasets.forEach((dataset, index) => {
             const color = colors[index];
             const total = dataset.data ? dataset.data.reduce((sum, val) => sum + val, 0) : 0;
+            const label = escapeHtml(dataset.label);
 
             legendHTML += `
                 <div class="legend-item" style="border-left-color: ${color.border}">
                     <div class="legend-color" style="background-color: ${color.background}"></div>
                     <div class="legend-info">
-                        <span class="legend-name" title="${dataset.label}">${dataset.label}</span>
+                        <span class="legend-name" title="${label}">${label}</span>
                         <span class="legend-value">${total.toLocaleString()}${currentChartType === 'strain' ? '次' : '个'}</span>
                     </div>
                 </div>

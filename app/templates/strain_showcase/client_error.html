@@ -1,0 +1,11 @@
+{% extends "layout.html" %}
+{% block title %}菌种知识库{% endblock %}
+
+{% block content %}
+<div style="max-width: 720px; margin: 40px auto; text-align: center;">
+    <div style="font-size: 46px; margin-bottom: 16px;">⚠️</div>
+    <h3 style="margin-bottom: 10px;">知识库服务暂时不可用</h3>
+    <p style="color: #57606f; margin-bottom: 20px;">{{ message }}</p>
+    <a href="{{ url_for('main.index') }}" style="color: #2471a3; font-size: 14px;">返回首页</a>
+</div>
+{% endblock %}

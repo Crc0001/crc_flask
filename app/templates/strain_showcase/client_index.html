@@ -1,0 +1,89 @@
+{% extends "layout.html" %}
+{% block title %}菌种知识库{% endblock %}
+
+{% block content %}
+<div class="kb-page">
+    <h2 style="margin-bottom: 14px;">🌱 菌种知识库</h2>
+    <div class="kb-tip">数据来源于 HwishAI 知识库服务（共 {{ total }} 条记录），检索结果实时返回。</div>
+
+    <form method="get" class="kb-search">
+        <input type="text" name="q" value="{{ filters.get('q', '') }}" placeholder="搜索学名 / 中文名 / BacDive 编号">
+        <input type="text" name="genus" value="{{ filters.get('genus', '') }}" placeholder="属名（可选）">
+        <select name="type_strain">
+            <option value="">全部类型</option>
+            <option value="yes" {{ 'selected' if filters.get('type_strain') == 'yes' }}>模式菌株</option>
+            <option value="no" {{ 'selected' if filters.get('type_strain') == 'no' }}>非模式菌株</option>
+        </select>
+        <button type="submit">搜索</button>
+    </form>
+
+    {% if not records %}
+        <div class="kb-empty">未找到匹配记录，请更换关键词重试。</div>
+    {% else %}
+    <div class="kb-grid">
+        {% for r in records %}
+        <a class="kb-card" href="{{ url_for('strain_showcase.detail', record_id=r.record_id) }}">
+            <div class="kb-name">{{ r.species_name_zh or r.species_name or r.full_scientific_name }}</div>
+            <div class="kb-latin">{{ r.species_name or r.full_scientific_name }}</div>
+            <div class="kb-meta">
+                {{ r.genus_name or '-' }} · {{ r.domain_name or '-' }}
+                {% if r.type_strain == 'yes' %}<span class="kb-tag">模式菌株</span>{% endif %}
+            </div>
+            <div class="kb-desc">{{ r.description_short or '' }}</div>
+        </a>
+        {% endfor %}
+    </div>
+
+    {% if pages > 1 %}
+    <div class="kb-pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('strain_showcase.index') }}?page={{ page - 1 }}{% if query_string %}&{{ query_string }}{% endif %}">上一页</a>
+        {% endif %}
+        {% for p in page_range %}
+            {% if p == page %}
+            <span class="current">{{ p }}</span>
+            {% else %}
+            <a href="{{ url_for('strain_showcase.index') }}?page={{ p }}{% if query_string %}&{{ query_string }}{% endif %}">{{ p }}</a>
+            {% endif %}
+        {% endfor %}
+        {% if page < pages %}
+        <a href="{{ url_for('strain_showcase.index') }}?page={{ page + 1 }}{% if query_string %}&{{ query_string }}{% endif %}">下一页</a>
+        {% endif %}
+        <span class="kb-page-info">第 {{ page }} / {{ pages }} 页</span>
+    </div>
+    {% endif %}
+    {% endif %}
+</div>
+
+<style>
+    .kb-tip { font-size: 13px; color: #7f8c8d; margin-bottom: 12px; }
+    .kb-search { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+    .kb-search input, .kb-search select {
+        height: 36px; padding: 0 10px; border: 1px solid #dcdde1; border-radius: 6px; font-size: 13px;
+    }
+    .kb-search input[type="text"] { flex: 1; min-width: 220px; }
+    .kb-search button {
+        height: 36px; padding: 0 18px; border: none; border-radius: 6px;
+        background: #1e272e; color: #fff; cursor: pointer; font-size: 13px;
+    }
+    .kb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+    .kb-card {
+        display: block; background: #fff; border-radius: 8px; padding: 14px 16px;
+        text-decoration: none; color: inherit; box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    }
+    .kb-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.12); transform: translateY(-2px); }
+    .kb-name { font-size: 15px; font-weight: 600; color: #1e272e; }
+    .kb-latin { font-size: 12px; color: #57606f; font-style: italic; margin: 3px 0 6px; }
+    .kb-meta { font-size: 12px; color: #7f8c8d; margin-bottom: 6px; }
+    .kb-tag { background: #eaf2f8; color: #2471a3; border-radius: 4px; padding: 1px 6px; margin-left: 4px; }
+    .kb-desc { font-size: 12px; color: #95a5a6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .kb-empty { padding: 60px; text-align: center; color: #7f8c8d; }
+    .kb-pagination { margin-top: 18px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .kb-pagination a, .kb-pagination .current {
+        display: inline-block; padding: 5px 11px; border-radius: 5px; font-size: 13px;
+        border: 1px solid #dcdde1; color: #2c3e50; text-decoration: none;
+    }
+    .kb-pagination .current { background: #1e272e; color: #fff; border-color: #1e272e; }
+    .kb-page-info { font-size: 12px; color: #7f8c8d; margin-left: 8px; }
+</style>
+{% endblock %}

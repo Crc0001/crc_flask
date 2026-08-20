@@ -18,6 +18,7 @@ env/
 .env.*
 !.env.example
 instance/
+!instance/config.example.py
 *.db
 *.sqlite
 *.sqlite3
@@ -56,6 +57,13 @@ HwishAI/model/paths.json
 # Unrelated local scratch script
 /11.py
 
+# 本地工具（ngrok 等不入库）
+tools/
+
 # 本地临时目录与识别评测输出（不入库）
 tmp/
 test_results/
+
+# 部署产物（打包输出与下载的安装包/离线依赖）
+dist/
+deploy_client/vendor/

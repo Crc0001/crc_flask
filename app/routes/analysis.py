@@ -1,8 +1,8 @@
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, current_app, render_template, request, jsonify
 from datetime import datetime, timedelta
 from collections import defaultdict
 from app.models.sample import Sample
-from app import db
+from app.extensions import db
 
 # 首先定义蓝图
 analysis_bp = Blueprint("analysis", __name__, url_prefix="/analysis")
@@ -65,21 +65,17 @@ def analysis_data():
             try:
                 start_date = datetime.strptime(start, "%Y-%m-%d")
                 query = query.filter(Sample.last_detect_time >= start_date)
-            except ValueError as e:
-                print(f"开始时间格式错误: {e}")
+            except ValueError:
                 return jsonify({"error": "开始时间格式错误"}), 400
 
         if end:
             try:
                 end_date = datetime.strptime(end, "%Y-%m-%d")
                 query = query.filter(Sample.last_detect_time <= end_date)
-            except ValueError as e:
-                print(f"结束时间格式错误: {e}")
+            except ValueError:
                 return jsonify({"error": "结束时间格式错误"}), 400
 
         samples = query.all()
-
-        print(f"查询到 {len(samples)} 条记录")
 
         # 数据统计
         stat = defaultdict(lambda: defaultdict(int))  # time_key -> key(strain/location) -> count
@@ -113,14 +109,11 @@ def analysis_data():
                 "data": [stat[tk].get(k, 0) for tk in time_keys],
             })
 
-        print(f"生成了 {len(datasets)} 个数据集")
-        print(f"时间标签: {time_keys}")
-
         return jsonify({
             "labels": time_keys,
             "datasets": datasets
         })
 
     except Exception as e:
-        print(f"处理数据时发生错误: {e}")
-        return jsonify({"error": "服务器内部错误", "details": str(e)}), 500
+        current_app.logger.error("趋势分析数据处理失败: %s", e, exc_info=True)
+        return jsonify({"error": "服务器内部错误"}), 500

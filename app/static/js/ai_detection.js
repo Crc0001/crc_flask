@@ -6,8 +6,6 @@ let latestMaldiChartBase64 = '';
 let latestMaldiCandidates = [];
 let latestDetectionImageUrl = '';
 let latestSelectedStrainConfidence = null; // 当前所选候选菌种的相对匹配度(0~1)
-let latestInputRisk = null; // 当前图片的组合软风险评估
-let latestInputAccepted = null; // 临时输入有效性门禁：false 时禁止候选选择与报告
 let latest16sMatchInfo = null; // 16S 匹配成功后的第一名候选，null=未匹配
 let latest16sQuerySequence = ''; // 与当前16S匹配结果对应的实际查询序列
 
@@ -75,6 +73,7 @@ function bindDropdownEvents(generalSelect, levelOneSelect, levelTwoSelect, fullL
         levelOneSelect.disabled = !selectedGeneral;
         levelTwoSelect.disabled = true;
         updateFullLocation(generalSelect, levelOneSelect, levelTwoSelect, fullLocationInput);
+        saveLocationMemory(generalSelect, levelOneSelect, levelTwoSelect);
 
         // 更新容器样式
         updateLocationContainerStyle(locationContainer, generalSelect, levelOneSelect, levelTwoSelect);
@@ -102,6 +101,7 @@ function bindDropdownEvents(generalSelect, levelOneSelect, levelTwoSelect, fullL
         levelTwoSelect.innerHTML = '<option value="">请选择二级分类</option>';
         levelTwoSelect.disabled = !selectedLevelOne;
         updateFullLocation(generalSelect, levelOneSelect, levelTwoSelect, fullLocationInput);
+        saveLocationMemory(generalSelect, levelOneSelect, levelTwoSelect);
 
         // 更新容器样式
         updateLocationContainerStyle(locationContainer, generalSelect, levelOneSelect, levelTwoSelect);
@@ -126,6 +126,7 @@ function bindDropdownEvents(generalSelect, levelOneSelect, levelTwoSelect, fullL
     // 第二级变化时，更新完整地址
     levelTwoSelect.addEventListener('change', function() {
         updateFullLocation(generalSelect, levelOneSelect, levelTwoSelect, fullLocationInput);
+        saveLocationMemory(generalSelect, levelOneSelect, levelTwoSelect);
         updateLocationContainerStyle(locationContainer, generalSelect, levelOneSelect, levelTwoSelect);
     });
 
@@ -155,7 +156,6 @@ function updateFullLocation(generalSelect, levelOneSelect, levelTwoSelect, fullL
     const general = generalSelect.value;
     const levelOne = levelOneSelect.value;
     const levelTwo = levelTwoSelect.value;
-
     let fullLocation = '';
     if (general && levelOne && levelTwo) {
         fullLocation = `${general}/${levelOne}/${levelTwo}`;
@@ -168,6 +168,51 @@ function updateFullLocation(generalSelect, levelOneSelect, levelTwoSelect, fullL
     fullLocationInput.value = fullLocation;
 }
 
+// ===== 采样地点：分类未配置时可不填 + 记住上次选择 =====
+const LOCATION_MEMORY_KEY = 'hwai_last_location';
+
+function markLocationOptional(generalSelect, levelOneSelect, levelTwoSelect, hierarchy) {
+    const empty = !hierarchy || Object.keys(hierarchy).length === 0;
+    [generalSelect, levelOneSelect, levelTwoSelect].forEach(sel => {
+        if (sel) sel.required = !empty;
+    });
+    const hint = document.getElementById('location-optional-hint');
+    if (hint) hint.style.display = empty ? 'inline' : 'none';
+    if (empty) {
+        levelOneSelect.disabled = true;
+        levelTwoSelect.disabled = true;
+    }
+}
+
+function saveLocationMemory(generalSelect, levelOneSelect, levelTwoSelect) {
+    try {
+        localStorage.setItem(LOCATION_MEMORY_KEY, JSON.stringify({
+            g: generalSelect.value || '',
+            l1: levelOneSelect.value || '',
+            l2: levelTwoSelect.value || ''
+        }));
+    } catch (e) { /* 忽略存储失败 */ }
+}
+
+function applyLocationMemory(generalSelect, levelOneSelect, levelTwoSelect, fullLocationInput, hierarchy, locationContainer) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(LOCATION_MEMORY_KEY) || 'null'); } catch (e) { saved = null; }
+    if (!saved || !saved.g || !hierarchy || !hierarchy[saved.g]) return;
+
+    generalSelect.value = saved.g;
+    generalSelect.dispatchEvent(new Event('change'));
+    if (saved.l1 && hierarchy[saved.g] && hierarchy[saved.g][saved.l1]) {
+        levelOneSelect.value = saved.l1;
+        levelOneSelect.dispatchEvent(new Event('change'));
+        if (saved.l2 && Array.isArray(hierarchy[saved.g][saved.l1]) &&
+            hierarchy[saved.g][saved.l1].indexOf(saved.l2) >= 0) {
+            levelTwoSelect.value = saved.l2;
+            levelTwoSelect.dispatchEvent(new Event('change'));
+        }
+    }
+    updateLocationContainerStyle(locationContainer, generalSelect, levelOneSelect, levelTwoSelect);
+}
+
 function fetchLocationData(generalSelect, levelOneSelect, levelTwoSelect, fullLocationInput, hierarchy, locationContainer) {
     fetch('/api/location_data')
         .then(response => {
@@ -178,6 +223,8 @@ function fetchLocationData(generalSelect, levelOneSelect, levelTwoSelect, fullLo
             window.locationHierarchy = data;
             populateGeneralDropdown(generalSelect, data);
             bindDropdownEvents(generalSelect, levelOneSelect, levelTwoSelect, fullLocationInput, data, locationContainer);
+            applyLocationMemory(generalSelect, levelOneSelect, levelTwoSelect, fullLocationInput, data, locationContainer);
+            markLocationOptional(generalSelect, levelOneSelect, levelTwoSelect, data);
         })
         .catch(error => {
             console.error('获取分类数据失败:', error);
@@ -215,8 +262,6 @@ function initFormValidation() {
                 latestSelectedStrainName = '';
                 latestDetectionImageUrl = '';
                 latestSelectedStrainConfidence = null;
-                latestInputRisk = null;
-                latestInputAccepted = null;
                 showFileInfo(this, '已选择: ');
                 previewSelectedImage(this.files[0]);
             }
@@ -409,8 +454,8 @@ function displayMaldiMatchResults(candidates) {
         html += `
             <tr class="${rank === 1 ? 'top-match-row' : ''}">
                 <td>${rank}</td>
-                <td>${candidate.strain_name || '未知菌种'}</td>
-                <td>${candidate.scientific_name || '-'}</td>
+                <td>${escapeHtml(candidate.strain_name || '未知菌种')}</td>
+                <td>${escapeHtml(candidate.scientific_name || '-')}</td>
                 <td class="score-cell">${score}%</td>
                 <td>${cosineSim}%</td>
                 <td>${queryCov}%</td>
@@ -563,8 +608,8 @@ function display16sMatchResults(candidates, queryInfo) {
         html += `
             <tr class="${rank === 1 ? 'top-match-row' : ''}">
                 <td>${rank}</td>
-                <td>${candidate.strain_name || '未知菌种'}</td>
-                <td>${candidate.scientific_name || '-'}</td>
+                <td>${escapeHtml(candidate.strain_name || '未知菌种')}</td>
+                <td>${escapeHtml(candidate.scientific_name || '-')}</td>
                 <td class="score-cell">${similarity}%</td>
                 <td>${candidate.match_length}</td>
                 <td>${candidate.query_length}</td>
@@ -582,6 +627,37 @@ function display16sMatchResults(candidates, queryInfo) {
 }
 
 // ===== 检测按钮功能 =====
+function showDetectProgress(resultBox) {
+    const timers = [];
+    function render(text, note) {
+        resultBox.innerHTML = '<div class="detect-progress" style="text-align:center; padding:30px;">' +
+            '<div class="loading-spinner"></div>' +
+            '<div style="margin-top:12px; font-size:15px; color:#2c3e50;">' + escapeHtml(text) + '</div>' +
+            (note ? '<div style="margin-top:6px; font-size:12px; color:#95a5a6;">' + escapeHtml(note) + '</div>' : '') +
+            '</div>';
+    }
+    render('正在上传图片并排队识别…');
+    timers.push(setTimeout(function () {
+        render('正在识别，约需 10~60 秒', '大图会先裁取培养皿并挑选菌落切片，请勿关闭页面');
+    }, 2000));
+    timers.push(setTimeout(function () {
+        render('仍在识别中，请耐心等待…', '网络或服务器繁忙时可能更久，完成后会自动显示结果');
+    }, 60000));
+    return timers;
+}
+
+function clearDetectProgress(timers) {
+    (timers || []).forEach(function (t) { clearTimeout(t); });
+}
+
+function friendlyErrorMessage(raw) {
+    const text = raw || '';
+    if (/无法连接我方|模型服务|未配置|知识库服务|HTTP 5/.test(text)) {
+        return '识别服务暂时不可用，请稍后再试，或联系系统管理员';
+    }
+    return text;
+}
+
 function initDetectionButtons() {
     const detectBtn = document.getElementById('orb-detect-btn');
     const resultBox = document.getElementById('orb-result');
@@ -597,7 +673,7 @@ function initDetectionButtons() {
             return;
         }
 
-        resultBox.innerHTML = '<div style="text-align:center; padding:30px;">图片预处理、输入有效性检查与 HwishAI 识别中...</div>';
+        const progressTimers = showDetectProgress(resultBox);
         setButtonState(detectBtn, true, '检测中...');
 
         const formData = new FormData();
@@ -607,26 +683,19 @@ function initDetectionButtons() {
             method: 'POST',
             body: formData
         })
-            .then(response => response.json())
+            .then(response => {
+                if (response.status === 401) {
+                    clearDetectProgress(progressTimers);
+                    window.location.href = '/login';
+                    throw new Error('登录已过期');
+                }
+                return response.json();
+            })
             .then(data => {
+                clearDetectProgress(progressTimers);
                 if (!data.success) {
                     throw new Error(data.message || '智能检测失败');
                 }
-
-                // ---- 门禁已注释（演示模式）：后端不再返回 accepted=false，拒答分支不再触发 ----
-                // if (data.accepted === false) {
-                //     latestOrbCandidates = [];
-                //     latestInputRisk = data.input_risk || null;
-                //     latestInputAccepted = false;
-                //     latestDetectionSummary = data.analysis_text || data.message || '';
-                //     latestSelectedStrainName = '';
-                //     latestDetectionImageUrl = data.result_image_url || '';
-                //     latestSelectedStrainConfidence = null;
-                //     resultBox.innerHTML = renderRejectedInput(data.input_risk, data.message);
-                //     updateDetectedPreview(latestDetectionImageUrl, data.image_selection);
-                //     showError(data.message || '图片未通过输入有效性检查');
-                //     return;
-                // }
 
                 const candidates = Array.isArray(data.candidates) ? data.candidates : [];
                 if (candidates.length === 0) {
@@ -634,8 +703,6 @@ function initDetectionButtons() {
                 }
 
                 latestOrbCandidates = candidates;
-                latestInputRisk = data.input_risk || null;
-                latestInputAccepted = true;
                 latestDetectionSummary = data.analysis_text || 'HwishAI 菌种识别已完成。';
                 latestSelectedStrainName = data.recommended_strain_name || candidates[0].matched_strain_name || '';
                 latestDetectionImageUrl = data.result_image_url || '';
@@ -652,7 +719,8 @@ function initDetectionButtons() {
                 showSuccess('处理完成，请查看 HwishAI 候选菌种');
             })
             .catch(error => {
-                const msg = error.message || '智能检测失败';
+                clearDetectProgress(progressTimers);
+                const msg = friendlyErrorMessage(error.message || '智能检测失败');
                 showError(msg);
                 resultBox.innerHTML = `<div style="text-align:center; padding:24px; color:#6b7280;">${escapeHtml(msg)}</div>`;
                 latestOrbCandidates = [];
@@ -660,8 +728,6 @@ function initDetectionButtons() {
                 latestSelectedStrainName = '';
                 latestDetectionImageUrl = '';
                 latestSelectedStrainConfidence = null;
-                latestInputRisk = null;
-                latestInputAccepted = null;
                 updateDetectedPreview('');
             })
             .finally(() => {
@@ -669,28 +735,6 @@ function initDetectionButtons() {
             });
     });
 }
-
-// ---- 门禁已注释（演示模式）：拒答渲染函数不再使用 ----
-// function renderRejectedInput(inputRisk, message) {
-//     const riskMessage = escapeHtml(message || '图片未通过输入有效性检查，请更换图片后重试。');
-//     const riskReason = escapeHtml((inputRisk && inputRisk.message) || '当前图片与菌落图像特征差异较大。');
-//     return `
-//         <div class="orb-result-wrap orb-rejected-input">
-//             <div class="orb-rejected-icon" aria-hidden="true">!</div>
-//             <div class="orb-rejected-content">
-//                 <div class="orb-rejected-title">未展示菌种候选</div>
-//                 <div class="orb-rejected-message">${riskMessage}</div>
-//                 <div class="orb-rejected-reason">${riskReason}</div>
-//                 <ul class="orb-rejected-tips">
-//                     <li>请上传直接拍摄的培养皿、平板或单菌落原图</li>
-//                     <li>避免网页截图、广告图、文档、仪器或大面积文字</li>
-//                     <li>尽量保证菌落清晰、光照均匀，减少无关背景</li>
-//                 </ul>
-//                 <div class="orb-rejected-foot">未通过检测门禁，已停止 Top3 展示。</div>
-//             </div>
-//         </div>
-//     `;
-// }
 
 function renderOrbCandidates(candidates, selectedName, inputRisk, plateCrop, imageSelection) {
     const rows = (candidates || []).slice(0, 3).map((item, idx) => {
@@ -741,19 +785,7 @@ function renderOrbCandidates(candidates, selectedName, inputRisk, plateCrop, ima
         `;
     }
 
-    // ---- 门禁已注释（演示模式）：不再展示"输入有效性"风险面板，结果纯为 BioCLIP + XGBoost ----
-    // const riskLevel = inputRisk && ['low', 'medium', 'high'].includes(inputRisk.level)
-    //     ? inputRisk.level
-    //     : 'medium';
-    // const riskLabel = escapeHtml((inputRisk && inputRisk.label) || '需复核');
-    // const riskMessage = escapeHtml((inputRisk && inputRisk.message) || '软风险信号暂不可用，Top3仅作为候选结果。');
-    // const riskPanel = `
-    //     <div class="orb-risk-warning ${riskLevel}">
-    //         <div class="orb-risk-title">输入有效性：${riskLabel}</div>
-    //         <div>${riskMessage}</div>
-    //         <div class="orb-risk-basis">判定依据：原始分类概率 + 菌种特征距离 + 零样本语义（当前结果建议结合 MALDI-TOF 或 16S 复核）</div>
-    //     </div>
-    // `;
+    // 输入有效性风险面板已随门禁一起下线（演示模式），保留空位以便后续启用
     const riskPanel = '';
     const cropNote = plateCrop && plateCrop.applied
         ? '培养皿已裁剪' + (plateCrop.needs_review ? '（建议复核裁剪范围）' : '') + ' · '
@@ -818,8 +850,7 @@ function getReportReminderState() {
     const strainInput = document.getElementById('report-field-strain-name');
     const editedName = (strainInput && strainInput.value.trim()) || '';
     const lowConf = latestSelectedStrainConfidence !== null && latestSelectedStrainConfidence < 0.5;
-    // ---- 门禁已注释（演示模式）：软风险不再作为报告提醒原因 ----
-    // const inputRisk = !!latestInputRisk && ['medium', 'high'].includes(latestInputRisk.level);
+    // 输入有效性软风险已随门禁下线（演示模式）
     const inputRisk = false;
     const changed = !!editedName && !!latestSelectedStrainName && editedName !== latestSelectedStrainName.trim();
     const tofDone = !!latestMaldiChartBase64;
@@ -846,8 +877,6 @@ function updateReportReminder() {
     }
 
     const causes = [];
-    // ---- 门禁已注释（演示模式）：不再提示"输入图片软风险需要复核" ----
-    // if (s.inputRisk) causes.push('输入图片软风险需要复核');
     if (s.lowConf) causes.push('所选菌种相对匹配度低于 50%');
     if (s.changed) causes.push('您在报告中修改了菌种名称');
     const why = causes.join('，且');
@@ -877,11 +906,6 @@ function initReportActions() {
 
         if (!imageFile) {
             showError('请先上传样本图片');
-            return;
-        }
-
-        if (latestInputAccepted === false) {
-            showError('当前图片未通过输入有效性检查，无法生成菌种报告');
             return;
         }
 
@@ -932,31 +956,31 @@ function initReportActions() {
             <div class="report-reminder" id="report-reminder" style="display: none; background: #fff8e1; border-left: 4px solid #f0ad4e; padding: 10px 12px; margin-bottom: 14px; color: #8a6d3b; font-size: 13px; border-radius: 4px; line-height: 1.6;"></div>
             <div class="report-item">
                 <div class="report-item-label">样品编号（可编辑）</div>
-                <input class="report-edit-input" id="report-field-sample-code" type="text" value="${(sampleCode && sampleCode.value.trim()) || ''}" placeholder="请输入样品编号">
+                <input class="report-edit-input" id="report-field-sample-code" type="text" value="${escapeHtml((sampleCode && sampleCode.value.trim()) || '')}" placeholder="请输入样品编号">
             </div>
             <div class="report-item">
                 <div class="report-item-label">采集日期（可编辑）</div>
-                <input class="report-edit-input" id="report-field-collect-date" type="date" value="${(collectDate && collectDate.value) || ''}">
+                <input class="report-edit-input" id="report-field-collect-date" type="date" value="${escapeHtml((collectDate && collectDate.value) || '')}">
             </div>
             <div class="report-item report-item-full">
                 <div class="report-item-label">来源（可编辑）</div>
-                <input class="report-edit-input" id="report-field-source-location" type="text" value="${(fullLocation && fullLocation.value.trim()) || ''}" placeholder="例如：食品/乳制品/发酵乳">
+                <input class="report-edit-input" id="report-field-source-location" type="text" value="${escapeHtml((fullLocation && fullLocation.value.trim()) || '')}" placeholder="例如：食品/乳制品/发酵乳">
             </div>
             <div class="report-item report-item-full">
                 <div class="report-item-label">菌种名称（可编辑）</div>
-                <input class="report-edit-input" id="report-field-strain-name" type="text" value="${latestSelectedStrainName}" placeholder="请输入菌种名称">
+                <input class="report-edit-input" id="report-field-strain-name" type="text" value="${escapeHtml(latestSelectedStrainName)}" placeholder="请输入菌种名称">
             </div>
             <div class="report-item report-item-full">
                 <div class="report-item-label">HwishAI识别与软风险评估结论（可编辑）</div>
-                <textarea class="report-edit-textarea" id="report-field-detection-result" placeholder="请输入或修改分析结论">${latestDetectionSummary || ''}</textarea>
+                <textarea class="report-edit-textarea" id="report-field-detection-result" placeholder="请输入或修改分析结论">${escapeHtml(latestDetectionSummary || '')}</textarea>
             </div>
             <div class="report-item">
                 <div class="report-item-label">样本图片</div>
-                <img class="report-thumb" src="${imageUrl}" alt="样本图片">
+                <img class="report-thumb" src="${escapeHtml(imageUrl)}" alt="样本图片">
             </div>
             <div class="report-item">
                 <div class="report-item-label">MALDI-TOF图谱</div>
-                ${maldiUrl ? `<img class="report-thumb" src="${maldiUrl}" alt="MALDI图谱">` : '<div class="report-item-value">未生成质谱图</div>'}
+                ${maldiUrl ? `<img class="report-thumb" src="${escapeHtml(maldiUrl)}" alt="MALDI图谱">` : '<div class="report-item-value">未生成质谱图</div>'}
             </div>
             ${rnaReportHtml}
         `;
@@ -1229,7 +1253,7 @@ function showError(message) {
     toast.innerHTML = `
         <div style="display: flex; align-items: center; gap: 10px;">
             <span style="font-size: 18px;">⚠️</span>
-            <span>${message}</span>
+            <span>${escapeHtml(message)}</span>
         </div>
     `;
 
@@ -1273,7 +1297,7 @@ function showSuccess(message) {
     toast.innerHTML = `
         <div style="display: flex; align-items: center; gap: 10px;">
             <span style="font-size: 18px;">✅</span>
-            <span>${message}</span>
+            <span>${escapeHtml(message)}</span>
         </div>
     `;
 
