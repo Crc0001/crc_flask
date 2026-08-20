@@ -27,37 +27,24 @@ class SampleLite(db.Model):
 
     @staticmethod
     def get_hierarchical_data():
-        """获取层次化的分类数据"""
-        # 获取所有唯一的大类（第0级）
-        general_classes = db.session.query(
-            SampleLite.class_general
-        ).distinct().all()
+        """获取层次化的分类数据（单次查询 + 内存组装，避免 N+1）。"""
+        rows = db.session.query(
+            SampleLite.class_general,
+            SampleLite.class_levelone,
+            SampleLite.class_leveltwo,
+        ).distinct().order_by(
+            SampleLite.class_general,
+            SampleLite.class_levelone,
+            SampleLite.class_leveltwo,
+        ).all()
 
         hierarchical_data = {}
-
-        for general in general_classes:
-            general_name = general[0]
-            # 获取该大类下的所有一级分类
-            levelone_classes = db.session.query(
-                SampleLite.class_levelone
-            ).filter_by(
-                class_general=general_name
-            ).distinct().all()
-
-            hierarchical_data[general_name] = {}
-
-            for levelone in levelone_classes:
-                levelone_name = levelone[0]
-                # 获取该一级分类下的所有二级分类
-                leveltwo_classes = db.session.query(
-                    SampleLite.class_leveltwo
-                ).filter_by(
-                    class_general=general_name,
-                    class_levelone=levelone_name
-                ).distinct().all()
-
-                hierarchical_data[general_name][levelone_name] = [
-                    leveltwo[0] for leveltwo in leveltwo_classes
-                ]
-
+        for general, levelone, leveltwo in rows:
+            general_name = general
+            levelone_name = levelone
+            hierarchical_data.setdefault(general_name, {}).setdefault(
+                levelone_name, []
+            )
+            if leveltwo not in hierarchical_data[general_name][levelone_name]:
+                hierarchical_data[general_name][levelone_name].append(leveltwo)
         return hierarchical_data
