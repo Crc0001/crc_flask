@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block title %}无权限{% endblock %}
+
+{% block content %}
+<div style="max-width: 640px; margin: 60px auto; text-align: center;">
+    <div style="font-size: 52px; margin-bottom: 14px;">🔒</div>
+    <h3 style="margin-bottom: 10px;">403 · 无权限访问</h3>
+    <p style="color: #57606f; margin-bottom: 20px;">
+        当前账号没有该功能的权限，如需使用请联系管理员在【权限管理】中授权。
+    </p>
+    <a href="{{ url_for('main.index') }}" style="color: #2471a3; font-size: 14px;">返回首页</a>
+</div>
+{% endblock %}

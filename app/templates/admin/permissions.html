@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block title %}权限管理{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <h2 style="margin-bottom: 14px;">🔐 权限管理</h2>
+    {% include "admin/_nav.html" %}
+
+    <div class="admin-card">
+        <div class="perm-tip">
+            勾选各角色可使用的功能；保存后立即生效（超级管理员恒为全部权限，此处不可改）。
+            账户管理仅管理员角色可用，不属于功能授权范围。
+        </div>
+        <form id="perm-form">
+            <table class="perm-table">
+                <thead>
+                    <tr>
+                        <th style="width: 220px;">功能</th>
+                        {% for role in roles %}<th>{{ role.label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for code, label in permission_items %}
+                    <tr>
+                        <td>
+                            <div class="perm-name">{{ label }}</div>
+                            <div class="perm-code">{{ code }}</div>
+                        </td>
+                        {% for role in roles %}
+                        <td>
+                            <input type="checkbox" name="perm_{{ role.code }}" value="{{ code }}"
+                                   {{ 'checked' if code in role.granted }}>
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div style="margin-top: 16px;">
+                <button type="submit" class="btn-primary">保存权限</button>
+                <span id="perm-msg" style="margin-left: 12px; color: #27ae60;"></span>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+    .admin-page { max-width: 880px; }
+    .admin-card { background: #fff; border-radius: 8px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .perm-tip { font-size: 13px; color: #7f8c8d; margin-bottom: 14px; }
+    .perm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .perm-table th, .perm-table td { border-bottom: 1px solid #f0f0f0; padding: 10px 8px; text-align: center; }
+    .perm-table th { color: #57606f; }
+    .perm-table td:first-child { text-align: left; }
+    .perm-name { font-weight: 600; }
+    .perm-code { font-size: 11px; color: #95a5a6; }
+    .btn-primary { background: #1e272e; color: #fff; border: none; border-radius: 5px; height: 34px; padding: 0 16px; cursor: pointer; font-size: 13px; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const form = document.getElementById('perm-form');
+    form.addEventListener('submit', e => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        fetch('/admin/permissions/save', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(j => {
+                const msg = document.getElementById('perm-msg');
+                msg.textContent = j.message || '已保存';
+                msg.style.color = j.success ? '#27ae60' : '#c0392b';
+                setTimeout(() => { msg.textContent = ''; }, 3000);
+            });
+    });
+})();
+</script>
+{% endblock %}

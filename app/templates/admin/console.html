@@ -1,0 +1,61 @@
+{% extends "layout.html" %}
+{% block title %}管理控制台{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <h2 style="margin-bottom: 14px;">📊 管理控制台</h2>
+    {% include "admin/_nav.html" %}
+
+    <div class="stat-grid">
+        <div class="stat-card">
+            <div class="stat-num">{{ stats.user_count }}</div>
+            <div class="stat-label">账号总数（启用 {{ stats.active_count }}）</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-num">{{ stats.sample_count }}</div>
+            <div class="stat-label">菌种样品记录</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-num">{{ stats.detect_week }}</div>
+            <div class="stat-label">近 7 天检测次数</div>
+        </div>
+        {% if stats.maldi_count is not none %}
+        <div class="stat-card">
+            <div class="stat-num">{{ stats.maldi_count }}</div>
+            <div class="stat-label">MALDI 参考谱</div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="admin-card">
+        <h4 style="margin-bottom: 10px;">最近登录</h4>
+        <table class="admin-table">
+            <thead><tr><th>时间</th><th>账号</th><th>动作</th><th>IP</th></tr></thead>
+            <tbody>
+                {% for log in recent_logins %}
+                <tr>
+                    <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '' }}</td>
+                    <td>{{ log.username }}</td>
+                    <td>{{ log.detail }}</td>
+                    <td>{{ log.ip or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" style="color: #95a5a6;">暂无登录记录</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .admin-page { max-width: 1080px; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .stat-card { background: #fff; border-radius: 8px; padding: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .stat-num { font-size: 30px; font-weight: 700; color: #1e272e; }
+    .stat-label { font-size: 13px; color: #7f8c8d; margin-top: 4px; }
+    .admin-card { background: #fff; border-radius: 8px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .admin-table th, .admin-table td { border-bottom: 1px solid #f0f0f0; padding: 8px 10px; text-align: left; }
+    .admin-table th { color: #57606f; font-weight: 600; }
+</style>
+{% endblock %}

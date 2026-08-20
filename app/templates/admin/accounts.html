@@ -1,0 +1,222 @@
+{% extends "layout.html" %}
+{% block title %}账户管理{% endblock %}
+
+{% block content %}
+<div class="accounts-page">
+    <h2 style="margin-bottom: 14px;">👥 账户管理</h2>
+    {% set active = 'accounts' %}
+    {% include "admin/_nav.html" %}
+
+    <!-- 新增账号 -->
+    <div class="accounts-card" style="margin-bottom: 20px;">
+        <h4 style="margin-bottom: 12px;">新增账号</h4>
+        <form id="create-form" class="accounts-create-form">
+            <input type="text" name="username" placeholder="用户名（登录用）" required>
+            <input type="text" name="display_name" placeholder="显示名（可留空）">
+            <select name="role">
+                {% if current_user.is_super_admin %}<option value="admin">管理员</option>{% endif %}
+                <option value="operator" selected>操作员</option>
+            </select>
+            <input type="password" name="password" placeholder="初始密码（至少8位）" required>
+            <button type="submit" class="btn-primary">创建</button>
+        </form>
+    </div>
+
+    <!-- 账号列表 -->
+    <div class="accounts-card">
+        <table class="accounts-table">
+            <thead>
+                <tr>
+                    <th>用户名</th><th>显示名</th><th>角色</th><th>状态</th>
+                    <th>创建时间</th><th>最后登录</th><th>API Token</th><th style="width: 320px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr data-user-id="{{ user.id }}">
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.display_name or user.username }}</td>
+                    <td>{{ user.role_label }}</td>
+                    <td>
+                        {% if user.is_active %}
+                            <span style="color: #27ae60;">启用</span>
+                        {% else %}
+                            <span style="color: #c0392b;">停用</span>
+                        {% endif %}
+                        {% if user.must_change_password %}<div style="font-size: 11px; color: #e67e22;">待改密</div>{% endif %}
+                        {% if user.locked_until %}<div style="font-size: 11px; color: #c0392b;">锁定中</div>{% endif %}
+                    </td>
+                    <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else '' }}</td>
+                    <td>{{ user.last_login_at.strftime('%Y-%m-%d %H:%M') if user.last_login_at else '—' }}</td>
+                    <td>{% if user.api_token_hash %}已签发{% else %}未签发{% endif %}</td>
+                    <td>
+                        <button class="btn-small js-toggle" data-target="edit-row-{{ user.id }}">编辑</button>
+                        <button class="btn-small js-toggle" data-target="pwd-row-{{ user.id }}">重置密码</button>
+                        <button class="btn-small js-reset-token" data-user-id="{{ user.id }}">重置Token</button>
+                        <button class="btn-small js-toggle-active" data-user-id="{{ user.id }}"
+                                data-active="{{ '0' if user.is_active else '1' }}">
+                            {{ '停用' if user.is_active else '启用' }}
+                        </button>
+                        <button class="btn-small btn-danger js-delete" data-user-id="{{ user.id }}"
+                                data-username="{{ user.username }}">删除</button>
+                    </td>
+                </tr>
+                <tr class="action-row" id="edit-row-{{ user.id }}" style="display: none;">
+                    <td colspan="8">
+                        <form class="action-form js-update" data-user-id="{{ user.id }}">
+                            <input type="text" name="display_name" value="{{ user.display_name or '' }}" placeholder="显示名">
+                            <select name="role">
+                                {% if current_user.is_super_admin %}
+                                <option value="admin" {{ 'selected' if user.role == 'admin' }}>管理员</option>
+                                {% endif %}
+                                <option value="operator" {{ 'selected' if user.role == 'operator' }}>操作员</option>
+                            </select>
+                            <label class="checkbox-inline"><input type="checkbox" name="is_active" value="1"
+                                {{ 'checked' if user.is_active }}> 启用</label>
+                            <button type="submit" class="btn-small btn-primary">保存</button>
+                            <button type="button" class="btn-small js-toggle" data-target="edit-row-{{ user.id }}">取消</button>
+                        </form>
+                    </td>
+                </tr>
+                <tr class="action-row" id="pwd-row-{{ user.id }}" style="display: none;">
+                    <td colspan="8">
+                        <form class="action-form js-reset-password" data-user-id="{{ user.id }}">
+                            <input type="password" name="password" placeholder="新密码（至少8位）" required>
+                            <label class="checkbox-inline"><input type="checkbox" name="force_change" value="1" checked> 首次登录强制改密</label>
+                            <button type="submit" class="btn-small btn-primary">重置</button>
+                            <button type="button" class="btn-small js-toggle" data-target="pwd-row-{{ user.id }}">取消</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Token 展示弹窗 -->
+<div id="token-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 999;">
+    <div style="background: #fff; width: 560px; margin: 12% auto; padding: 24px; border-radius: 8px;">
+        <h4 style="margin-bottom: 10px;">新 API Token（仅显示这一次，请立即保存）</h4>
+        <textarea id="token-text" readonly style="width: 100%; height: 70px; resize: none; font-size: 13px;"></textarea>
+        <div style="margin-top: 14px; text-align: right;">
+            <button class="btn-small js-copy-token">复制</button>
+            <button class="btn-small" onclick="document.getElementById('token-modal').style.display='none'">关闭</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .accounts-page { max-width: 1180px; }
+    .accounts-card { background: #fff; border-radius: 8px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .accounts-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .accounts-table th, .accounts-table td { border-bottom: 1px solid #f0f0f0; padding: 9px 8px; text-align: left; vertical-align: top; }
+    .accounts-table th { color: #57606f; font-weight: 600; }
+    .accounts-create-form, .action-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .accounts-create-form input, .accounts-create-form select,
+    .action-form input, .action-form select {
+        height: 34px; padding: 0 10px; border: 1px solid #dcdde1; border-radius: 5px; font-size: 13px;
+    }
+    .btn-primary { background: #1e272e; color: #fff; border: none; border-radius: 5px; height: 34px; padding: 0 14px; cursor: pointer; font-size: 13px; }
+    .btn-small { background: #fff; color: #2c3e50; border: 1px solid #dcdde1; border-radius: 5px; height: 28px; padding: 0 10px; cursor: pointer; font-size: 12px; margin: 2px 0; }
+    .btn-small:hover { border-color: #3498db; color: #3498db; }
+    .btn-danger:hover { border-color: #e74c3c; color: #e74c3c; }
+    .checkbox-inline { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    function post(url, data) {
+        const body = new URLSearchParams(data);
+        return fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
+            .then(r => r.json().then(j => ({ ok: r.ok && j.success, status: r.status, data: j })));
+    }
+
+    function toast(msg) { alert(msg); }
+
+    document.querySelectorAll('.js-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = document.getElementById(btn.dataset.target);
+            if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+        });
+    });
+
+    const createForm = document.getElementById('create-form');
+    createForm.addEventListener('submit', e => {
+        e.preventDefault();
+        const fd = new FormData(createForm);
+        post('/admin/accounts/create', Object.fromEntries(fd.entries())).then(r => {
+            toast(r.data.message || '操作完成');
+            if (r.ok) location.reload();
+        });
+    });
+
+    document.querySelectorAll('.js-update').forEach(form => {
+        form.addEventListener('submit', e => {
+            e.preventDefault();
+            const fd = new FormData(form);
+            post(`/admin/accounts/${form.dataset.userId}/update`, Object.fromEntries(fd.entries())).then(r => {
+                toast(r.data.message || '操作完成');
+                if (r.ok) location.reload();
+            });
+        });
+    });
+
+    document.querySelectorAll('.js-reset-password').forEach(form => {
+        form.addEventListener('submit', e => {
+            e.preventDefault();
+            const fd = new FormData(form);
+            post(`/admin/accounts/${form.dataset.userId}/reset_password`, Object.fromEntries(fd.entries())).then(r => {
+                toast(r.data.message || '操作完成');
+                if (r.ok) location.reload();
+            });
+        });
+    });
+
+    document.querySelectorAll('.js-reset-token').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (!confirm('重置后旧 Token 立即失效，确定重置？')) return;
+            post(`/admin/accounts/${btn.dataset.userId}/reset_token`, {}).then(r => {
+                if (r.ok && r.data.token) {
+                    document.getElementById('token-text').value = r.data.token;
+                    document.getElementById('token-modal').style.display = 'block';
+                } else {
+                    toast(r.data.message || '操作失败');
+                }
+            });
+        });
+    });
+
+    document.querySelector('.js-copy-token').addEventListener('click', () => {
+        const ta = document.getElementById('token-text');
+        ta.select();
+        document.execCommand('copy');
+        toast('已复制到剪贴板');
+    });
+
+    document.querySelectorAll('.js-toggle-active').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const active = btn.dataset.active;
+            const action = active === '0' ? '停用' : '启用';
+            if (!confirm(`确定${action}该账号？`)) return;
+            post(`/admin/accounts/${btn.dataset.userId}/update`, { is_active: active }).then(r => {
+                toast(r.data.message || '操作完成');
+                if (r.ok) location.reload();
+            });
+        });
+    });
+
+    document.querySelectorAll('.js-delete').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (!confirm(`确定删除账号 ${btn.dataset.username} ？此操作不可恢复。`)) return;
+            post(`/admin/accounts/${btn.dataset.userId}/delete`, {}).then(r => {
+                toast(r.data.message || '操作完成');
+                if (r.ok) location.reload();
+            });
+        });
+    });
+})();
+</script>
+{% endblock %}

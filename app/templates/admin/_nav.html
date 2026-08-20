@@ -1,0 +1,14 @@
+<div class="admin-nav">
+    <a href="{{ url_for('admin_console.index') }}" class="{{ 'active' if active == 'index' }}">📊 概览</a>
+    <a href="{{ url_for('admin_accounts.index') }}" class="{{ 'active' if active == 'accounts' }}">👥 用户管理</a>
+    <a href="{{ url_for('admin_console.permissions') }}" class="{{ 'active' if active == 'permissions' }}">🔐 权限管理</a>
+    <a href="{{ url_for('admin_console.logs') }}" class="{{ 'active' if active == 'logs' }}">📜 操作日志</a>
+</div>
+<style>
+    .admin-nav { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+    .admin-nav a {
+        padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 14px;
+        background: #fff; color: #2c3e50; border: 1px solid #dcdde1;
+    }
+    .admin-nav a.active { background: #1e272e; color: #fff; border-color: #1e272e; }
+</style>

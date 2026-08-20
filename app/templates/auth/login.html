@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录 · AI 菌种分析系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1e272e 0%, #2c3e50 100%);
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+        }
+        .login-card {
+            width: 380px;
+            background: #fff;
+            border-radius: 10px;
+            padding: 40px 36px 30px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+        }
+        .login-card h1 {
+            font-size: 22px;
+            color: #1e272e;
+            text-align: center;
+            margin-bottom: 6px;
+        }
+        .login-card .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 13px;
+            margin-bottom: 26px;
+        }
+        .form-group { margin-bottom: 18px; }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #2c3e50;
+            margin-bottom: 6px;
+        }
+        .form-group input[type="text"],
+        .form-group input[type="password"] {
+            width: 100%;
+            height: 40px;
+            padding: 0 12px;
+            border: 1px solid #dcdde1;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+        }
+        .form-group input:focus { border-color: #3498db; }
+        .form-options {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #57606f;
+            margin-bottom: 20px;
+        }
+        .btn-login {
+            width: 100%;
+            height: 42px;
+            border: none;
+            border-radius: 6px;
+            background: #1e272e;
+            color: #fff;
+            font-size: 15px;
+            cursor: pointer;
+        }
+        .btn-login:hover { background: #2c3e50; }
+        .flash { padding: 9px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
+        .flash.error { background: #fdecea; color: #c0392b; }
+        .flash.success { background: #eafaf1; color: #27ae60; }
+        .login-footer { margin-top: 22px; text-align: center; font-size: 12px; color: #95a5a6; }
+    </style>
+</head>
+<body>
+<div class="login-card">
+    <h1>AI 智能微生物管理系统</h1>
+    <div class="subtitle">HwishAI 菌种识别 · 请登录</div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <form method="post" action="{{ url_for('auth.login', next=next_url or '') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group">
+            <label>用户名</label>
+            <input type="text" name="username" autocomplete="username" required autofocus>
+        </div>
+        <div class="form-group">
+            <label>密码</label>
+            <input type="password" name="password" autocomplete="current-password" required>
+        </div>
+        <div class="form-options">
+            <input type="checkbox" name="remember" value="1" id="remember">
+            <label for="remember" style="margin: 0;">记住登录状态</label>
+        </div>
+        <button type="submit" class="btn-login">登 录</button>
+    </form>
+    <div class="login-footer">© HwishAI · 本系统仅供授权账号使用</div>
+</div>
+</body>
+</html>

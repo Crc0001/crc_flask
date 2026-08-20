@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block title %}文件过大{% endblock %}
+
+{% block content %}
+<div style="max-width: 640px; margin: 60px auto; text-align: center;">
+    <div style="font-size: 52px; margin-bottom: 14px;">📦</div>
+    <h3 style="margin-bottom: 10px;">413 · 上传内容过大</h3>
+    <p style="color: #57606f; margin-bottom: 20px;">
+        上传内容超过了服务器的大小限制，请压缩图片或更换更小的文件后重试。
+    </p>
+    <a href="{{ url_for('main.index') }}" style="color: #2471a3; font-size: 14px;">返回首页</a>
+</div>
+{% endblock %}

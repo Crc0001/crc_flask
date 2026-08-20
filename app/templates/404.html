@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block title %}页面不存在{% endblock %}
+
+{% block content %}
+<div style="max-width: 640px; margin: 60px auto; text-align: center;">
+    <div style="font-size: 52px; margin-bottom: 14px;">🧭</div>
+    <h3 style="margin-bottom: 10px;">404 · 页面不存在</h3>
+    <p style="color: #57606f; margin-bottom: 20px;">
+        您访问的页面不存在或已被移除。
+    </p>
+    <a href="{{ url_for('main.index') }}" style="color: #2471a3; font-size: 14px;">返回首页</a>
+</div>
+{% endblock %}

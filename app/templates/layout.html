@@ -3,7 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}AI 菌种分析系统{% endblock %}</title>
+
+    <script>
+    // 全局 fetch 安全包装：
+    // 1) 同源状态变更请求自动注入 CSRF Token 头（对应后端 _csrf_protect 校验）；
+    // 2) 会话过期（401 / 被重定向到登录页）统一跳转登录，避免把登录页 HTML 注入页面。
+    (function () {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        var csrf = meta ? meta.getAttribute('content') : '';
+        var origFetch = window.fetch;
+        window.fetch = function (input, init) {
+            init = init || {};
+            var url = typeof input === 'string' ? input : (input && (input.url || input.href)) || '';
+            var sameOrigin = url.indexOf('http') !== 0 || url.indexOf(window.location.origin) === 0;
+            var method = (init.method || 'GET').toUpperCase();
+            if (sameOrigin && csrf && ['POST', 'PUT', 'PATCH', 'DELETE'].indexOf(method) >= 0) {
+                init.headers = init.headers || {};
+                if (init.headers instanceof Headers) {
+                    if (!init.headers.has('X-CSRF-Token')) init.headers.set('X-CSRF-Token', csrf);
+                } else if (typeof init.headers === 'object') {
+                    if (!init.headers['X-CSRF-Token']) init.headers['X-CSRF-Token'] = csrf;
+                }
+            }
+            return origFetch(input, init).then(function (resp) {
+                var target = resp.url || '';
+                if (sameOrigin && (resp.status === 401 || (resp.redirected && target.indexOf('/login') !== -1))) {
+                    var redirectTo = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                    window.location.href = redirectTo;
+                    throw new Error('会话已过期，请重新登录');
+                }
+                return resp;
+            });
+        };
+    })();
+    </script>
 
     <!-- 全局基础样式 -->
     <style>
@@ -18,10 +53,15 @@
             background: #1e272e;
             color: white;
             padding-top: 20px;
+            display: flex;
+            flex-direction: column;
         }
         .sidebar h2 {
             text-align: center;
             margin-bottom: 30px;
+        }
+        .menu {
+            flex: 1;
         }
         .menu a {
             display: block;
@@ -32,6 +72,49 @@
         .menu a:hover {
             background: #485460;
         }
+        .user-bar {
+            border-top: 1px solid #485460;
+            padding: 12px 16px;
+            font-size: 13px;
+        }
+        .user-bar .user-name {
+            margin-bottom: 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .user-bar .user-role {
+            color: #95a5a6;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .user-bar a {
+            display: block;
+            color: #bdc3c7;
+            text-decoration: none;
+            padding: 4px 0;
+        }
+        .user-bar a:hover { color: white; }
+        .svc-status {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 12px;
+            color: #bdc3c7;
+            padding: 7px 0;
+            margin-bottom: 4px;
+        }
+        .svc-status .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #95a5a6;
+            flex-shrink: 0;
+        }
+        .svc-status.ok .dot { background: #2ecc71; }
+        .svc-status.err .dot { background: #e74c3c; }
+        .svc-status.ok .svc-text { color: #d5f5e3; }
+        .svc-status.err .svc-text { color: #fadbd8; }
         .content {
             flex: 1;
             padding: 20px;
@@ -48,11 +131,33 @@
 <div class="sidebar">
     <h2>AI智能微生物管理系统</h2>
     <div class="menu">
+        {% if current_user.is_authenticated and current_user.has_perm('ai_detection') %}
         <a href="/ai_detection">🧫 菌种检测</a>
+        {% endif %}
+        {% if current_user.is_authenticated and current_user.has_perm('strain_db') %}
         <a href="/strain_db">📚 菌种数据库</a>
+        {% endif %}
+        {% if current_user.is_authenticated and current_user.has_perm('analysis') %}
         <a href="/analysis">📈 趋势分析</a>
+        {% endif %}
+        {% if current_user.is_authenticated and current_user.has_perm('strain_showcase') %}
         <a href="/strain_showcase">🌱 菌种知识库</a>
+        {% endif %}
     </div>
+    {% if current_user.is_authenticated %}
+    <div class="user-bar">
+        <div class="svc-status" id="svc-status" title="正在检测服务状态...">
+            <span class="dot"></span><span class="svc-text">检测服务状态...</span>
+        </div>
+        <div class="user-name" title="{{ current_user.username }}">👤 {{ current_user.display_name or current_user.username }}</div>
+        <div class="user-role">{{ current_user.role_label }}</div>
+        {% if current_user.is_admin %}
+        <a href="/admin/">⚙️ 管理控制台</a>
+        {% endif %}
+        <a href="{{ url_for('auth.change_password') }}">🔑 修改密码</a>
+        <a href="{{ url_for('auth.logout') }}">🚪 退出登录</a>
+    </div>
+    {% endif %}
 </div>
 
 <div class="content">
@@ -61,6 +166,29 @@
 
 <!-- ✅ 页面级 JS（比如 strain_db.js） -->
 {% block extra_js %}{% endblock %}
+
+{% if current_user.is_authenticated %}
+<script>
+(function () {
+    var el = document.getElementById('svc-status');
+    if (!el) return;
+    fetch('/healthz')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var ok = data.status === 'ok';
+            el.className = 'svc-status ' + (ok ? 'ok' : 'err');
+            el.innerHTML = '<span class="dot"></span><span class="svc-text">' +
+                (ok ? '识别服务正常' : '识别服务不可用') + '</span>';
+            el.title = ok ? ('版本 ' + (data.version || '')) : ((data.upstream_message || '') + ' · 可稍后自动恢复');
+        })
+        .catch(function () {
+            el.className = 'svc-status err';
+            el.innerHTML = '<span class="dot"></span><span class="svc-text">本机服务异常</span>';
+            el.title = '页面健康检查失败';
+        });
+})();
+</script>
+{% endif %}
 
 </body>
 </html>
